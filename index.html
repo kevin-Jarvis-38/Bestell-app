@@ -3,23 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1f2a44">
+  <meta name="theme-color" content="#e03131">
   <title>Bestellung</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preload" href="fonts/nunito-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body data-sup="lekkerland">
   <header class="top">
-    <div class="row1">
-      <div class="sup-tabs" role="tablist" aria-label="Lieferant"></div>
+    <div class="title-row" id="titleRow">
+      <div>
+        <h1 class="title">Bestellung</h1>
+        <div class="subtitle" id="today"></div>
+      </div>
       <button class="icon-btn" id="menuBtn" aria-label="Sicherung">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5"/><path d="M12 12v8m-3-3 3 3 3-3"/>
         </svg>
       </button>
     </div>
+    <div class="sup-tabs" role="tablist" aria-label="Lieferant"></div>
     <div class="view-tabs" role="tablist">
       <button role="tab" data-view-tab="count">Durchgehen <span class="badge" id="badgeCount"></span></button>
       <button role="tab" data-view-tab="order">Bestellliste <span class="badge" id="badgeOrder"></span></button>
@@ -44,6 +49,9 @@
       <input id="pName" autocomplete="off" autocapitalize="sentences" enterkeyhint="done">
     </label>
     <p class="hint error" id="pNameHint" hidden>Bitte einen Namen eingeben.</p>
+    <div class="field" id="pEmojiField">Symbol
+      <div class="emoji-grid" id="pEmoji"></div>
+    </div>
     <div id="pProductFields">
       <div class="field">Bestellen bei
         <div class="sup-checks" id="pSup"></div>
@@ -63,7 +71,6 @@
     <p class="hint" id="pPosHint"></p>
     <div class="actions">
       <button type="button" class="btn danger ghost" data-pact="delete">Löschen</button>
-      <span class="spacer"></span>
       <button type="button" class="btn" data-pact="cancel">Abbrechen</button>
       <button type="button" class="btn primary" data-pact="save">Speichern</button>
     </div>
@@ -91,6 +98,10 @@
       <p class="hint" id="lastBackup"></p>
       <button type="button" class="btn big" id="exportBtn">Sicherung speichern</button>
       <button type="button" class="btn big" id="importBtn">Sicherung laden</button>
+      <h3>Automatische Wiederherstellungspunkte</h3>
+      <p class="hint">Die App merkt sich einmal pro Woche von selbst den ganzen Stand und behält die letzten 4.
+        Das hilft, wenn du aus Versehen etwas gelöscht hast. Die Punkte liegen aber auf diesem Handy und ersetzen keine Sicherung.</p>
+      <div class="snaps" id="snapList"></div>
       <button class="btn big ghost" value="close">Schließen</button>
       <p class="hint center" id="versionText"></p>
     </form>

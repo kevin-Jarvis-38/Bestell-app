@@ -10,12 +10,16 @@ Offline-App fürs Handy, um die Bestellungen bei Lekkerland und Tabacon vorzuber
   dieses Lieferanten auf 0.
 - **Bestellliste:** abhaken, was am PC eingegeben ist (wird durchgestrichen), oder per „Teilen“ als Text verschicken.
 - Alles wird sofort auf dem Handy gespeichert. Sicherung über das Wolken-Symbol oben rechts; die App erinnert daran,
-  wenn die letzte Sicherung älter als 14 Tage ist.
+  wenn die letzte Sicherung älter als 7 Tage ist.
+- **Wiederherstellungspunkte:** einmal pro Woche legt die App beim Öffnen selbst eine Kopie von allem an (die letzten 4),
+  zusätzlich vor jedem Zurückholen und vor dem Laden einer Sicherung. Sie liegen auf dem Handy und ersetzen keine Sicherung.
+- Design: Kopfbereich in der Lieferantenfarbe (Lekkerland rot, Tabacon blau), Emojis für Abschnitte, Konfetti,
+  wenn die Bestellliste fertig abgehakt ist. Schrift: Nunito (SIL Open Font License, siehe `fonts/OFL.txt`).
 
 ## Technik
 
 Eine Web-App (PWA): `index.html`, `app.js`, `style.css`. `sw.js` hält die Dateien offline vor.
-Laufweg und Listen liegen im `localStorage`, Fotos in der IndexedDB des Handys. Es gibt keinen Server und kein Konto,
+Laufweg und Listen liegen im `localStorage`, Fotos und Wiederherstellungspunkte in der IndexedDB des Handys. Es gibt keinen Server und kein Konto,
 die Daten verlassen das Handy nur über eine selbst gespeicherte Sicherung.
 
 Version 1 hatte zwei getrennte Listen. Beim ersten Start von Version 2 werden sie automatisch zu einem Laufweg

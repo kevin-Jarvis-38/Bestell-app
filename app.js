@@ -1,14 +1,18 @@
 'use strict';
 
 // Lieferanten: der Schlüssel (key) darf sich nie ändern, der Name schon.
+// color = Farbe der Handy-Statusleiste
 const SUPPLIERS = [
-  { key: 'lekkerland', name: 'Lekkerland' },
-  { key: 'tabacon', name: 'Tabacon' },
+  { key: 'lekkerland', name: 'Lekkerland', color: '#e03131' },
+  { key: 'tabacon', name: 'Tabacon', color: '#1c7ed6' },
 ];
-const VERSION = '2.0';
+const VERSION = '2.1';
 const STORAGE_KEY = 'bestellapp';
 const PHOTO_MAX = 480; // längste Bildkante in Pixeln, hält die Fotos klein
-const BACKUP_DAYS = 14; // so alt darf die letzte Sicherung sein, bevor die App daran erinnert
+const BACKUP_DAYS = 7; // so alt darf die letzte Sicherung sein, bevor die App daran erinnert
+const SNAPSHOT_DAYS = 7; // Abstand der automatischen Wiederherstellungspunkte
+const SNAPSHOT_KEEP = 4;
+const EMOJIS = ['🥐', '🍞', '🥨', '🍰', '🧊', '🥤', '🧃', '⚡', '🍺', '🍷', '🍫', '🍬', '🍭', '🥜', '🍦', '🚬', '🔥', '🎟️', '📰', '🧴', '🧻', '🔋', '🛒', '📦'];
 
 const $ = sel => document.querySelector(sel);
 const main = $('#main');
@@ -18,12 +22,14 @@ const byName = (a, b) => a.name.localeCompare(b.name, 'de', { sensitivity: 'base
 const buzz = () => navigator.vibrate && navigator.vibrate(12);
 const isProduct = e => e.kind === 'product';
 const isSection = e => e.kind === 'section';
+const sectionLabel = s => (s.emoji ? `<span class="emoji">${esc(s.emoji)}</span>` : '') + esc(s.name);
+const fmtDateTime = ts => new Date(ts).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 const TRASH = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>`;
 
 // ---------- Zustand (localStorage) ----------
 // route:  der Laufweg durch den Laden, gemeinsam für alle Lieferanten. Er enthält Abschnitte
-//         { id, kind: 'section', name } und Produkte
+//         { id, kind: 'section', name, emoji } und Produkte
 //         { id, kind: 'product', name, photo, soll, sup: { lekkerland: true, … }, count: { lekkerland: 0, … } }.
 // orders: die bestätigte Bestellliste je Lieferant.
 
@@ -34,7 +40,7 @@ function emptyState() {
 }
 
 function fixEntry(e) {
-  if (e.kind === 'section') return { id: e.id, kind: 'section', name: String(e.name || '') };
+  if (e.kind === 'section') return { id: e.id, kind: 'section', name: String(e.name || ''), emoji: String(e.emoji || '').slice(0, 8) };
   const p = { id: e.id, kind: 'product', name: String(e.name || ''), photo: !!e.photo, soll: null, sup: {}, count: {} };
   if (Number.isInteger(e.soll) && e.soll >= 0) p.soll = e.soll;
   for (const s of SUPPLIERS) {
@@ -128,43 +134,56 @@ function visibleRoute(k) {
   return out;
 }
 
-// ---------- Fotos (IndexedDB, Schlüssel = Produkt-ID) ----------
+// ---------- IndexedDB: Fotos (Schlüssel = Produkt-ID) und Wiederherstellungspunkte (Schlüssel = Zeitpunkt) ----------
 
 let dbPromise;
 function db() {
   return dbPromise || (dbPromise = new Promise((res, rej) => {
-    const r = indexedDB.open('bestellapp-fotos', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('fotos');
+    const r = indexedDB.open('bestellapp-fotos', 2);
+    r.onupgradeneeded = () => {
+      if (!r.result.objectStoreNames.contains('fotos')) r.result.createObjectStore('fotos');
+      if (!r.result.objectStoreNames.contains('punkte')) r.result.createObjectStore('punkte');
+    };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
   }));
 }
 
-async function photoTx(fn) {
+async function writeTx(store, fn) {
   const d = await db();
   return new Promise((res, rej) => {
-    const tx = d.transaction('fotos', 'readwrite');
-    fn(tx.objectStore('fotos'));
+    const tx = d.transaction(store, 'readwrite');
+    fn(tx.objectStore(store));
     tx.oncomplete = () => res();
     tx.onerror = () => rej(tx.error);
     tx.onabort = () => rej(tx.error);
   });
 }
-const putPhoto = (id, blob) => photoTx(s => s.put(blob, id));
-const deletePhoto = id => photoTx(s => s.delete(id));
-const clearPhotos = () => photoTx(s => s.clear());
+const putPhoto = (id, blob) => writeTx('fotos', s => s.put(blob, id));
+const deletePhoto = id => writeTx('fotos', s => s.delete(id));
+const clearPhotos = () => writeTx('fotos', s => s.clear());
 
-async function loadAllPhotos() {
+async function readAll(store) {
   const d = await db();
   return new Promise((res, rej) => {
     const map = new Map();
-    const req = d.transaction('fotos').objectStore('fotos').openCursor();
+    const req = d.transaction(store).objectStore(store).openCursor();
     req.onsuccess = () => {
       const c = req.result;
       if (!c) return res(map);
       map.set(c.key, c.value);
       c.continue();
     };
+    req.onerror = () => rej(req.error);
+  });
+}
+const loadAllPhotos = () => readAll('fotos');
+
+async function readKeys(store) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const req = d.transaction(store).objectStore(store).getAllKeys();
+    req.onsuccess = () => res(req.result);
     req.onerror = () => rej(req.error);
   });
 }
@@ -196,20 +215,25 @@ async function shrinkImage(file) {
   }
 }
 
+// Ohne Foto: Anfangsbuchstabe auf einer Farbe, die sich aus dem Namen ergibt
+const hue = s => [...s].reduce((h, c) => (h * 31 + c.codePointAt(0)) % 360, 7);
 function thumb(p) {
   const url = p.photo && photoUrls.get(p.id);
+  if (url) return `<span class="thumb"><img src="${url}" alt=""></span>`;
   const letter = esc((p.name || '?').trim().charAt(0).toUpperCase());
-  return `<span class="thumb">${url ? `<img src="${url}" alt="">` : letter}</span>`;
+  return `<span class="thumb letter" style="--h:${hue(p.name)}">${letter}</span>`;
 }
 
 // ---------- Kopfzeile, Scrollposition, Abschnitts-Knöpfe ----------
 
+// Die Titelzeile scrollt weg, der Rest der Kopfzeile bleibt stehen (--head = stehender Teil)
 const header = $('.top');
-let headerHeight = 0;
 new ResizeObserver(() => {
-  headerHeight = header.offsetHeight;
-  document.documentElement.style.setProperty('--head', headerHeight + 'px');
+  const titleH = $('#titleRow').offsetHeight;
+  document.documentElement.style.setProperty('--title-h', titleH + 'px');
+  document.documentElement.style.setProperty('--head', header.offsetHeight - titleH + 'px');
 }).observe(header);
+$('#today').textContent = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
 
 const scrollKey = () => state.ui.supplier + ':' + state.ui.view;
 let scrollTimer;
@@ -233,7 +257,7 @@ function renderChips() {
   const route = editing ? state.route : visibleRoute(state.ui.supplier);
   const sections = state.ui.view === 'count' && !search ? route.filter(isSection) : [];
   chips.hidden = !sections.length;
-  chips.innerHTML = sections.map(s => `<button data-sec="${s.id}">${esc(s.name)}</button>`).join('');
+  chips.innerHTML = sections.map(s => `<button data-sec="${s.id}">${s.emoji ? esc(s.emoji) + ' ' : ''}${esc(s.name)}</button>`).join('');
   markChip();
 }
 
@@ -242,8 +266,9 @@ function markChip() {
   const chips = $('#secChips');
   if (chips.hidden) return;
   let active = null;
+  const limit = header.getBoundingClientRect().bottom + 30;
   for (const el of main.querySelectorAll('[id^="sec-"]')) {
-    if (el.getBoundingClientRect().top <= headerHeight + 30) active = el.id.slice(4);
+    if (el.getBoundingClientRect().top <= limit) active = el.id.slice(4);
     else break;
   }
   for (const b of chips.children) {
@@ -264,6 +289,10 @@ $('#secChips').addEventListener('click', e => {
 
 function render() {
   document.body.dataset.sup = state.ui.supplier;
+  document.querySelector('meta[name=theme-color]').content = SUPPLIERS.find(s => s.key === state.ui.supplier).color;
+  main.classList.remove('enter');
+  void main.offsetWidth; // Einblend-Animation neu starten
+  main.classList.add('enter');
   for (const b of document.querySelectorAll('[data-sup-tab]')) b.setAttribute('aria-selected', b.dataset.supTab === state.ui.supplier);
   for (const b of document.querySelectorAll('[data-view-tab]')) b.setAttribute('aria-selected', b.dataset.viewTab === state.ui.view);
   if (state.ui.view === 'order') renderOrder();
@@ -301,6 +330,7 @@ function renderCount() {
   updateBadges();
   if (!state.route.length) {
     main.innerHTML = `<div class="empty">
+      <div class="empty-icon">🛒</div>
       <p>Es sind noch keine Produkte angelegt.</p>
       <p>Leg sie in der Reihenfolge an, in der du durch den Laden läufst. Bei jedem Produkt wählst du, bei welchem Lieferanten es bestellt wird.</p>
       <button class="btn primary big" data-act="add">+ Erstes Produkt anlegen</button>
@@ -310,6 +340,7 @@ function renderCount() {
   }
   if (!editing && !state.route.some(e => isProduct(e) && e.sup[k])) {
     main.innerHTML = `<div class="empty">
+      <div class="empty-icon">📦</div>
       <p>Bei <b>${esc(supName())}</b> ist noch kein Produkt dabei.</p>
       <p>Tippe auf „Bearbeiten“, öffne ein Produkt und setze den Haken bei ${esc(supName())}.</p>
       <button class="btn primary big" data-act="toggle-edit">✎ Bearbeiten</button></div>`;
@@ -345,7 +376,7 @@ function renderList() {
   renderChips();
 }
 
-const sectionHeading = s => `<li class="sec" id="sec-${s.id}">${esc(s.name)}</li>`;
+const sectionHeading = s => `<li class="sec" id="sec-${s.id}">${sectionLabel(s)}</li>`;
 
 const countRow = (p, k) => `
   <li class="row${p.count[k] ? ' on' : ''}" data-id="${p.id}">
@@ -364,7 +395,7 @@ function editRow(e, i, n) {
     <button class="step del" data-act="delete" aria-label="löschen">${TRASH}</button>`;
   if (isSection(e)) {
     return `<li class="row edit section" id="sec-${e.id}" data-id="${e.id}">
-      <span class="pos">${i + 1}</span><button class="rowbtn" data-act="open"><span class="name">${esc(e.name)}</span></button>${tools}</li>`;
+      <span class="pos">${i + 1}</span><button class="rowbtn" data-act="open"><span class="name">${sectionLabel(e)}</span></button>${tools}</li>`;
   }
   const tags = SUPPLIERS.filter(s => e.sup[s.key]).map(s => `<span class="tag tag-${s.key}">${esc(s.name)}</span>`).join('');
   const soll = e.soll !== null ? `<span>Soll ${e.soll}</span>` : '';
@@ -379,6 +410,7 @@ function renderOrder() {
   renderChips();
   if (!o) {
     main.innerHTML = `<div class="empty">
+      <div class="empty-icon">📝</div>
       <p>Noch keine Bestellliste für <b>${esc(supName())}</b>.</p>
       <p>Geh unter „Durchgehen“ die Produkte durch und tippe ganz unten auf „Liste bestätigen“.</p></div>`;
     return;
@@ -419,7 +451,11 @@ function changeCount(id, delta, li) {
   save();
   buzz();
   li.classList.toggle('on', p.count[k] > 0);
-  li.querySelector('.count').textContent = p.count[k];
+  const count = li.querySelector('.count');
+  count.textContent = p.count[k];
+  count.classList.remove('pop');
+  void count.offsetWidth; // Hüpf-Animation neu starten
+  count.classList.add('pop');
   li.querySelector('[data-act=minus]').disabled = !p.count[k];
   $('#countText').innerHTML = countSummary();
   updateBadges();
@@ -461,13 +497,60 @@ async function confirmOrder() {
 }
 
 function toggleDone(i, btn) {
-  const it = state.orders[state.ui.supplier].items[i];
+  const items = state.orders[state.ui.supplier].items;
+  const it = items[i];
   it.done = !it.done;
   save();
   buzz();
   btn.classList.toggle('done', it.done);
+  btn.classList.toggle('just', it.done);
   btn.setAttribute('aria-checked', it.done);
   updateOrderProgress();
+  if (it.done && items.every(x => x.done)) confetti();
+}
+
+function confetti() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const c = document.createElement('canvas');
+  c.className = 'confetti';
+  const dpr = devicePixelRatio || 1;
+  const w = innerWidth, h = innerHeight;
+  c.width = w * dpr;
+  c.height = h * dpr;
+  document.body.appendChild(c);
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  const colors = [getComputedStyle(document.body).getPropertyValue('--accent').trim(), '#ffd43b', '#51cf66', '#4dabf7', '#f783ac', '#ff922b'];
+  const parts = Array.from({ length: 150 }, () => ({
+    x: w / 2 + (Math.random() - 0.5) * 100,
+    y: h * 0.7,
+    vx: (Math.random() - 0.5) * 14,
+    vy: -Math.random() * 15 - 7,
+    w: 6 + Math.random() * 6,
+    h: 9 + Math.random() * 8,
+    r: Math.random() * Math.PI,
+    vr: (Math.random() - 0.5) * 0.35,
+    color: colors[Math.floor(Math.random() * colors.length)],
+  }));
+  const start = performance.now();
+  requestAnimationFrame(function frame(t) {
+    g.clearRect(0, 0, w, h);
+    for (const p of parts) {
+      p.vy += 0.38;
+      p.vx *= 0.99;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.r += p.vr;
+      g.save();
+      g.translate(p.x, p.y);
+      g.rotate(p.r);
+      g.fillStyle = p.color;
+      g.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      g.restore();
+    }
+    if (t - start < 3200) requestAnimationFrame(frame);
+    else c.remove();
+  });
 }
 
 async function clearOrder() {
@@ -617,6 +700,8 @@ function openEntry(id, insertAt, kind = 'product') {
   $('#pSupHint').hidden = true;
   $('#pPhotoRow').hidden = !isProd;
   $('#pProductFields').hidden = !isProd;
+  $('#pEmojiField').hidden = isProd;
+  if (!isProd) pickEmoji(e ? e.emoji : '');
   if (isProd) {
     $('#pSoll').value = e && e.soll !== null ? e.soll : '';
     const sup = e ? e.sup : (state.ui.newSup || { [state.ui.supplier]: true });
@@ -632,6 +717,15 @@ function openEntry(id, insertAt, kind = 'product') {
 }
 
 $('#pSup').innerHTML = SUPPLIERS.map(s => `<label class="chk"><input type="checkbox" name="sup" value="${s.key}">${esc(s.name)}</label>`).join('');
+
+$('#pEmoji').innerHTML = ['', ...EMOJIS].map(em => `<button type="button" data-emoji="${em}" aria-label="${em || 'kein Symbol'}">${em || '–'}</button>`).join('');
+function pickEmoji(emoji) {
+  for (const b of $('#pEmoji').children) b.classList.toggle('on', b.dataset.emoji === emoji);
+}
+$('#pEmoji').addEventListener('click', e => {
+  const b = e.target.closest('[data-emoji]');
+  if (b) pickEmoji(b.dataset.emoji);
+});
 
 // Abschnitt gewählt: Produkt ans Ende dieses Abschnitts setzen
 $('#pSec').addEventListener('change', () => {
@@ -701,7 +795,11 @@ async function saveEntry(next) {
     e = route.splice(from, 1)[0];
     e.name = name;
   } else {
-    e = isProd ? fixEntry({ id: newId(), kind: 'product', name }) : { id: newId(), kind: 'section', name };
+    e = fixEntry({ id: newId(), kind: pd.kind, name });
+  }
+  if (!isProd) {
+    const on = $('#pEmoji .on');
+    e.emoji = on ? on.dataset.emoji : '';
   }
   if (isProd) {
     for (const s of SUPPLIERS) {
@@ -795,8 +893,78 @@ function showLastBackup() {
 
 function openMenu() {
   showLastBackup();
+  renderSnapshots();
   menuDlg.showModal();
 }
+
+// ---------- Automatische Wiederherstellungspunkte ----------
+
+const SNAPSHOT_REASONS = { weekly: 'automatisch', restore: 'vor dem Wiederherstellen', import: 'vor dem Laden einer Sicherung' };
+
+async function takeSnapshot(reason) {
+  const ids = new Set(state.route.filter(p => isProduct(p) && p.photo).map(p => p.id));
+  const snap = { created: Date.now(), reason, route: state.route, orders: state.orders, photos: {} };
+  for (const [id, blob] of await loadAllPhotos()) if (ids.has(id)) snap.photos[id] = blob;
+  await writeTx('punkte', s => s.put(snap, snap.created));
+  const old = (await readKeys('punkte')).sort((a, b) => b - a).slice(SNAPSHOT_KEEP);
+  if (old.length) await writeTx('punkte', s => old.forEach(k => s.delete(k)));
+}
+
+async function weeklySnapshot() {
+  if (!state.route.some(isProduct)) return;
+  const newest = Math.max(0, ...await readKeys('punkte'));
+  if (Date.now() - newest >= SNAPSHOT_DAYS * 864e5) await takeSnapshot('weekly');
+}
+
+async function renderSnapshots() {
+  const list = $('#snapList');
+  try {
+    const snaps = [...(await readAll('punkte')).values()].sort((a, b) => b.created - a.created);
+    list.innerHTML = snaps.length
+      ? snaps.map(s => `<button type="button" class="snap" data-snap="${s.created}">
+          <span><b>${fmtDateTime(s.created)}</b><small>${s.route.filter(isProduct).length} Produkte · ${SNAPSHOT_REASONS[s.reason] || ''}</small></span>
+          <span class="go">Zurückholen</span></button>`).join('')
+      : '<p class="hint">Noch keiner. Der erste entsteht automatisch, sobald Produkte angelegt sind.</p>';
+  } catch (err) {
+    list.innerHTML = `<p class="hint error">Konnte nicht gelesen werden: ${esc(err.message)}</p>`;
+  }
+}
+
+async function replaceAll(route, orders, photos) {
+  await clearPhotos();
+  for (const url of photoUrls.values()) URL.revokeObjectURL(url);
+  photoUrls.clear();
+  for (const [id, blob] of photos) {
+    await putPhoto(id, blob);
+    setPhotoUrl(id, blob);
+  }
+  state = normalize({ route, orders, ui: { ...state.ui, scroll: {} } });
+  editing = false;
+  search = '';
+  save();
+  menuDlg.close();
+  render();
+}
+
+$('#snapList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-snap]');
+  if (!b) return;
+  const snap = (await readAll('punkte')).get(Number(b.dataset.snap));
+  if (!snap) return;
+  const n = snap.route.filter(isProduct).length;
+  if (!await ask({
+    title: 'Stand zurückholen?',
+    text: `Die App springt zurück auf den Stand vom ${fmtDateTime(snap.created)} (${n} Produkte). Der jetzige Stand wird vorher selbst als Wiederherstellungspunkt gespeichert.`,
+    yes: 'Zurückholen',
+    no: 'Abbrechen',
+  })) return;
+  try {
+    await takeSnapshot('restore');
+    await replaceAll(snap.route, snap.orders, Object.entries(snap.photos || {}));
+  } catch (err) {
+    alert('Zurückholen fehlgeschlagen: ' + err.message);
+  }
+});
 $('#menuBtn').addEventListener('click', openMenu);
 // Erinnerung oben ausblenden, sobald gesichert wurde
 menuDlg.addEventListener('close', () => {
@@ -847,20 +1015,10 @@ $('#importInput').addEventListener('change', async e => {
   const n = fresh.route.filter(isProduct).length;
   if (!await ask({ title: 'Sicherung laden?', text: `Die Sicherung enthält ${n} Produkte. Alles, was gerade in der App ist, wird dadurch ersetzt.`, yes: 'Laden', no: 'Abbrechen', danger: true })) return;
   try {
-    await clearPhotos();
-    for (const url of photoUrls.values()) URL.revokeObjectURL(url);
-    photoUrls.clear();
-    for (const [id, dataUrl] of Object.entries(data.photos || {})) {
-      const blob = await (await fetch(dataUrl)).blob();
-      await putPhoto(id, blob);
-      setPhotoUrl(id, blob);
-    }
-    state = fresh;
-    editing = false;
-    search = '';
-    save();
-    menuDlg.close();
-    render();
+    const photos = [];
+    for (const [id, dataUrl] of Object.entries(data.photos || {})) photos.push([id, await (await fetch(dataUrl)).blob()]);
+    if (state.route.some(isProduct)) await takeSnapshot('import');
+    await replaceAll(fresh.route, fresh.orders, photos);
   } catch (err) {
     alert('Laden fehlgeschlagen: ' + err.message);
   }
@@ -884,6 +1042,7 @@ async function init() {
       renderList();
       scrollTo(0, y);
     }
+    await weeklySnapshot();
   } catch (err) {
     console.error(err);
   }

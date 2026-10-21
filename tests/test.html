@@ -83,8 +83,10 @@ async function reset() {
     // ---------- Laufweg mit Abschnitten anlegen ----------
     check(q('.empty [data-act=add]') && q('.empty [data-act=add-section]'), 'Leere App bietet Produkt und Abschnitt an');
     click('[data-act=add-section]');
-    check(q('#pProductFields').hidden && q('#pPhotoRow').hidden, 'Abschnitt-Fenster ohne Foto und Lieferanten');
+    check(q('#pProductFields').hidden && q('#pPhotoRow').hidden && !q('#pEmojiField').hidden, 'Abschnitt-Fenster mit Symbol, ohne Foto und Lieferanten');
+    click('#pEmoji [data-emoji="🥐"]');
     await fill('Backwaren'); await saveDlg();
+    check(route()[0].emoji === '🥐' && q(`#sec-${route()[0].id}`).textContent.includes('🥐'), 'Abschnitt-Symbol gespeichert und angezeigt');
     click('[data-act=add]');
     check(q('#pSup input[value=lekkerland]').checked && !q('#pSup input[value=tabacon]').checked, 'Neues Produkt: aktueller Lieferant vorausgewählt');
     await fill('Brötchen', { sup: ['lekkerland', 'tabacon'], soll: 6, photo: true }); await saveDlg(true);
@@ -119,8 +121,16 @@ async function reset() {
     click(`[data-id="${byNameId('Tabak')}"] [data-act=down]`);
 
     // ---------- Durchgehen je Lieferant ----------
+    // Fenster darf auf schmalen Handys nicht seitlich scrollen
+    frame.style.width = '320px'; await wait(200);
+    click(`[data-id="${byNameId('Brötchen')}"] [data-act=open]`); await wait(300);
+    const dlg = q('#productDlg');
+    check(dlg.scrollWidth <= dlg.clientWidth, `Produktfenster bei 320 px ohne seitliches Scrollen (${dlg.scrollWidth} ≤ ${dlg.clientWidth})`);
+    click('#productDlg [data-pact=cancel]');
+    frame.style.width = '412px'; await wait(200);
+
     click('[data-act=toggle-edit]');
-    check(qa('#list .sec').length === 1 && q('#list .sec').textContent === 'Backwaren', 'Lekkerland: nur Abschnitte mit Lekkerland-Produkten');
+    check(qa('#list .sec').length === 1 && q('#list .sec').textContent === '🥐Backwaren', 'Lekkerland: nur Abschnitte mit Lekkerland-Produkten');
     check(qa('#list .row').length === 3 && !q('#secChips').hidden && qa('#secChips button').length === 1, 'Lekkerland: 3 Produkte, 1 Sprungknopf');
     check(q(`[data-id="${byNameId('Brötchen')}"] .soll`).textContent === 'Soll 6', 'Soll-Bestand steht beim Produkt');
     click('[data-sup-tab=tabacon]');
@@ -169,6 +179,9 @@ async function reset() {
     click('.orow[data-i="0"]');
     await load();
     check(q('.orow[data-i="0"]').classList.contains('done') && q('#doneText').textContent.startsWith('1 von 2'), 'Haken bleibt nach Neustart');
+    click('.orow[data-i="1"]');
+    check(q('canvas.confetti'), 'Konfetti beim letzten Haken');
+    check(d().querySelector('meta[name=theme-color]').content === '#1c7ed6', 'Statusleiste in Tabacon-Blau');
 
     // ---------- Sicherungs-Erinnerung ----------
     click('[data-view-tab=count]');
@@ -193,6 +206,18 @@ async function reset() {
     click('#productDlg [data-pact=delete]');
     await answer(true);
     check(!names().includes('Brötchen') && !q('#productDlg').open, 'Löschen im Fenster');
+
+    // ---------- Wiederherstellungspunkte ----------
+    check((await w().readKeys('punkte')).length === 1, 'Automatischer Wiederherstellungspunkt beim Start angelegt');
+    await load(); await wait(300);
+    check((await w().readKeys('punkte')).length === 1, 'Nicht öfter als einmal pro Woche');
+    click('#menuBtn'); await wait(300);
+    check(qa('#snapList .snap').length === 1, 'Punkt erscheint im Sicherungsfenster');
+    click('#snapList .snap'); await wait(200);
+    check(q('#askTitle').textContent === 'Stand zurückholen?', 'Zurückholen fragt nach');
+    await answer(true); await wait(600);
+    check(names().includes('Brötchen') && q(`[data-id="${broe}"] img`), 'Gelöschtes Produkt samt Foto ist zurück');
+    check((await w().readKeys('punkte')).length === 2, 'Stand vor dem Zurückholen wurde gesichert');
   } catch (e) {
     check(false, 'Abbruch: ' + e.stack);
   }

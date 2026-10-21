@@ -5,13 +5,13 @@
 const params = new URLSearchParams(location.search);
 const L = { lekkerland: true, tabacon: false }, T = { lekkerland: false, tabacon: true }, B = { lekkerland: true, tabacon: true };
 const entries = [
-  ['#', 'Backwaren'], ['Brötchen hell', B, 6, 20], ['Croissant', L, 0, 8], ['Laugenbrezel', L, 4, 10],
-  ['#', 'Kühlschrank'], ['Coca-Cola 0,5 l', L, 0, 12], ['Red Bull 0,25 l', B, 12, 24],
-  ['#', 'Kasse'], ['Haribo Goldbären 175 g', L, 0, null], ['Marlboro Rot 10 €', B, 3, 10], ['Marlboro Gold 10 €', T, 2, 6],
+  ['#', 'Backwaren', '🥐'], ['Brötchen hell', B, 6, 20], ['Croissant', L, 0, 8], ['Laugenbrezel', L, 4, 10],
+  ['#', 'Kühlschrank', '🧊'], ['Coca-Cola 0,5 l', L, 0, 12], ['Red Bull 0,25 l', B, 12, 24],
+  ['#', 'Kasse', '🚬'], ['Haribo Goldbären 175 g', L, 0, null], ['Marlboro Rot 10 €', B, 3, 10], ['Marlboro Gold 10 €', T, 2, 6],
   ['L&M Blue 9 €', T, 0, 5], ['Feuerzeug Clipper', B, 5, 20],
 ];
 const route = entries.map(([name, sup, n, soll], i) => name === '#'
-  ? { id: 's' + i, kind: 'section', name: sup }
+  ? { id: 's' + i, kind: 'section', name: sup, emoji: n }
   : { id: 'p' + i, kind: 'product', name, photo: false, soll, sup, count: { lekkerland: sup.lekkerland ? n : 0, tabacon: 0 } });
 const items = route.filter(e => e.kind === 'product' && e.count.lekkerland)
   .map(p => ({ id: p.id, name: p.name, count: p.count.lekkerland, done: false }))
