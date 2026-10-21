@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1f2a44">
+  <title>Bestellung</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-sup="lekkerland">
+  <header class="top">
+    <div class="row1">
+      <div class="sup-tabs" role="tablist" aria-label="Lieferant"></div>
+      <button class="icon-btn" id="menuBtn" aria-label="Menü">⋮</button>
+    </div>
+    <div class="view-tabs" role="tablist">
+      <button role="tab" data-view-tab="count">Durchgehen <span class="badge" id="badgeCount"></span></button>
+      <button role="tab" data-view-tab="order">Bestellliste <span class="badge" id="badgeOrder"></span></button>
+    </div>
+  </header>
+
+  <main id="main"></main>
+
+  <!-- Produkt anlegen / bearbeiten -->
+  <dialog id="productDlg">
+    <h2 id="pTitle"></h2>
+    <div class="photo-edit">
+      <span class="big-thumb" id="pPhoto"></span>
+      <div class="photo-btns">
+        <button type="button" class="btn" data-pact="cam">📷 Foto aufnehmen</button>
+        <button type="button" class="btn" data-pact="gal">Aus Galerie</button>
+        <button type="button" class="btn ghost" data-pact="rmphoto">Foto entfernen</button>
+      </div>
+    </div>
+    <label class="field">Name
+      <input id="pName" autocomplete="off" autocapitalize="sentences" enterkeyhint="done">
+    </label>
+    <p class="hint error" id="pNameHint" hidden>Bitte einen Namen eingeben.</p>
+    <label class="field">Position im Laufweg
+      <input id="pPos" type="number" inputmode="numeric" min="1">
+    </label>
+    <p class="hint" id="pPosHint"></p>
+    <div class="actions">
+      <button type="button" class="btn danger ghost" data-pact="delete">Löschen</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-pact="cancel">Abbrechen</button>
+      <button type="button" class="btn primary" data-pact="save">Speichern</button>
+    </div>
+    <button type="button" class="btn primary big" data-pact="save-next">Speichern &amp; nächstes Produkt</button>
+  </dialog>
+
+  <!-- Sicherheitsabfrage -->
+  <dialog id="askDlg">
+    <form method="dialog">
+      <h2 id="askTitle"></h2>
+      <p id="askText"></p>
+      <div class="ask-btns">
+        <button class="btn big" value="no" id="askNo">Nein</button>
+        <button class="btn big primary" value="yes" id="askYes">Ja</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Menü: Sicherung -->
+  <dialog id="menuDlg">
+    <form method="dialog">
+      <h2>Sicherung</h2>
+      <p>Alle Produkte, Fotos und Listen liegen nur auf diesem Handy. Speichere ab und zu eine Sicherung
+        und leg sie z.&nbsp;B. in Google Drive ab. Dann ist nichts verloren, wenn das Handy kaputtgeht oder du es wechselst.</p>
+      <p class="hint" id="lastBackup"></p>
+      <button type="button" class="btn big" id="exportBtn">Sicherung speichern</button>
+      <button type="button" class="btn big" id="importBtn">Sicherung laden</button>
+      <button class="btn big ghost" value="close">Schließen</button>
+      <p class="hint center" id="versionText"></p>
+    </form>
+  </dialog>
+
+  <input type="file" id="camInput" accept="image/*" capture="environment" hidden>
+  <input type="file" id="galInput" accept="image/*" hidden>
+  <input type="file" id="importInput" accept=".json,application/json" hidden>
+
+  <script src="app.js"></script>
+</body>
+</html>

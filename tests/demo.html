@@ -1,0 +1,35 @@
+<!doctype html>
+<meta charset="utf-8">
+<script>
+// Füllt die App mit Beispieldaten für Screenshots. ?view=order|count, ?sup=lekkerland|tabacon
+const params = new URLSearchParams(location.search);
+const names = ['Brötchen hell', 'Croissant', 'Laugenbrezel', 'Coca-Cola 0,5 l', 'Red Bull 0,25 l', 'Haribo Goldbären 175 g',
+  'Marlboro Rot 10 €', 'Marlboro Gold 10 €', 'L&M Blue 9 €', 'Kaugummi Airwaves', 'Feuerzeug Clipper'];
+const counts = [6, 0, 4, 0, 12, 0, 3, 2, 0, 0, 5];
+const products = names.map((name, i) => ({ id: 'p' + i, name, count: counts[i], photo: false }));
+const order = {
+  created: Date.now() - 3600e3,
+  items: products.filter(p => p.count).map(p => ({ id: p.id, name: p.name, count: p.count, done: false }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'de')),
+};
+order.items[0].done = order.items[1].done = true;
+localStorage.setItem('bestellapp', JSON.stringify({
+  suppliers: { lekkerland: { products, order }, tabacon: { products: [], order: null } },
+  ui: { supplier: params.get('sup') || 'lekkerland', view: params.get('view') || 'count', scroll: {}, lastBackup: null },
+}));
+</script>
+<style>body { margin: 0; } iframe { border: 0; width: 412px; height: 915px; display: block; }</style>
+<iframe src="../index.html"></iframe>
+<script>
+// ?edit=p6 öffnet das Bearbeiten-Fenster dieses Produkts
+if (params.get('edit')) {
+  const timer = setInterval(() => {
+    const doc = document.querySelector('iframe').contentDocument;
+    const btn = doc && doc.querySelector('[data-act=toggle-edit]');
+    if (!btn) return;
+    clearInterval(timer);
+    btn.click();
+    doc.querySelector(`[data-id="${params.get('edit')}"] [data-act=open]`).click();
+  }, 100);
+}
+</script>

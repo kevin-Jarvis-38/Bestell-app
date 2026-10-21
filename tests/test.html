@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"><title>Bestell-App Test</title></head>
+<body>
+<pre id="log">läuft…</pre>
+<iframe id="app" style="width:412px;height:900px"></iframe>
+<script>
+// Spielt die wichtigsten Abläufe der App durch und schreibt das Ergebnis in #log.
+const log = [];
+let fails = 0;
+const check = (ok, msg) => {
+  log.push((ok ? 'OK   ' : 'FEHL ') + msg);
+  if (!ok) fails++;
+  document.getElementById('log').textContent = 'läuft…\n' + log.join('\n');
+};
+const step = msg => { log.push('…    ' + msg); document.getElementById('log').textContent = 'läuft…\n' + log.join('\n'); };
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const frame = document.getElementById('app');
+
+function load() {
+  return new Promise(res => { frame.onload = () => setTimeout(res, 400); frame.src = '../index.html?t=' + Date.now(); });
+}
+const w = () => frame.contentWindow;
+const d = () => frame.contentDocument;
+const q = s => d().querySelector(s);
+const qa = s => [...d().querySelectorAll(s)];
+const click = s => { const el = typeof s === 'string' ? q(s) : s; el.click(); };
+const stored = () => JSON.parse(w().localStorage.getItem('bestellapp'));
+
+async function addProduct(name, { next = false, photo = false } = {}) {
+  q('#pName').value = name;
+  if (photo) {
+    const c = d().createElement('canvas'); c.width = 1200; c.height = 900;
+    const g = c.getContext('2d'); g.fillStyle = '#c00'; g.fillRect(0, 0, 1200, 900);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg'));
+    const dt = new (w().DataTransfer)(); dt.items.add(new (w().File)([blob], 'foto.jpg', { type: 'image/jpeg' }));
+    q('#camInput').files = dt.files;
+    q('#camInput').dispatchEvent(new (w().Event)('change'));
+    await wait(400);
+  }
+  click(`#productDlg [data-pact="${next ? 'save-next' : 'save'}"]`);
+  await wait(300);
+}
+async function answer(yes) { await wait(100); click(yes ? '#askYes' : '#askNo'); await wait(200); }
+
+(async () => {
+  try {
+    step('lade App');
+    await load();
+    step('lösche alte Daten');
+    w().localStorage.clear();
+    await new Promise(r => { const req = w().indexedDB.deleteDatabase('bestellapp-fotos'); req.onsuccess = req.onerror = req.onblocked = r; });
+    step('lade App neu');
+    await load();
+
+    check(q('.empty') && q('[data-act=add]'), 'Leere Liste zeigt "Erstes Produkt anlegen"');
+    click('[data-act=add]');
+    check(q('#productDlg').open, 'Produktfenster öffnet sich');
+    await addProduct('Marlboro Rot 10 €', { next: true, photo: true });
+    check(q('#productDlg').open && q('#pName').value === '' && q('#pPos').value === '2', '"Speichern & nächstes" leert das Fenster, Position 2');
+    await addProduct('Brötchen', { next: true });
+    await addProduct('Apfelschorle');
+    check(!q('#productDlg').open, 'Speichern schließt das Fenster');
+    let s = stored();
+    check(s.suppliers.lekkerland.products.map(p => p.name).join('|') === 'Marlboro Rot 10 €|Brötchen|Apfelschorle', 'Reihenfolge = Anlege-Reihenfolge');
+    check(s.suppliers.lekkerland.products[0].photo === true && q('.row img'), 'Foto gespeichert und angezeigt');
+
+    // Reihenfolge ändern: Apfelschorle eins hoch
+    const apfel = s.suppliers.lekkerland.products[2].id;
+    click(`[data-id="${apfel}"] [data-act=up]`);
+    check(stored().suppliers.lekkerland.products.map(p => p.name).join('|') === 'Marlboro Rot 10 €|Apfelschorle|Brötchen', 'Pfeil hoch verschiebt');
+    // Position per Nummer: Brötchen an Position 1
+    const broet = stored().suppliers.lekkerland.products[2].id;
+    click(`[data-id="${broet}"] [data-act=open]`);
+    q('#pPos').value = '1';
+    click('#productDlg [data-pact=save]'); await wait(300);
+    check(stored().suppliers.lekkerland.products.map(p => p.name).join('|') === 'Brötchen|Marlboro Rot 10 €|Apfelschorle', 'Position per Nummer setzen');
+
+    click('[data-act=toggle-edit]');
+    check(q('[data-act=confirm]'), 'Nach "Fertig" ist "Liste bestätigen" unten');
+
+    // Zählen
+    const marl = stored().suppliers.lekkerland.products[1].id;
+    for (let i = 0; i < 3; i++) click(`[data-id="${marl}"] [data-act=plus]`);
+    click(`[data-id="${apfel}"] [data-act=plus]`);
+    click(`[data-id="${apfel}"] [data-act=plus]`);
+    click(`[data-id="${apfel}"] [data-act=minus]`);
+    check(q(`[data-id="${marl}"] .count`).textContent === '3', '3× +1 ergibt 3');
+    check(q('#badgeCount').textContent === '2', 'Zähler-Abzeichen zeigt 2 Produkte');
+
+    // Nach Neuladen noch da?
+    await load();
+    check(q(`[data-id="${marl}"] .count`).textContent === '3' && q(`[data-id="${apfel}"] .count`).textContent === '1', 'Zählstand bleibt nach Neustart erhalten');
+    check(q(`[data-id="${marl}"] img`), 'Foto bleibt nach Neustart erhalten');
+
+    // Bestätigen mit Nein
+    click('[data-act=confirm]');
+    check(q('#askDlg').open && q('#askTitle').textContent === 'Bist du sicher?', 'Abfrage "Bist du sicher?" erscheint');
+    await answer(false);
+    check(stored().suppliers.lekkerland.order === null && stored().ui.view === 'count', '"Nein" ändert nichts');
+    click('[data-act=confirm]');
+    await answer(true);
+    s = stored();
+    check(s.ui.view === 'order', '"Ja" wechselt zur Bestellliste');
+    check(s.suppliers.lekkerland.order.items.map(i => i.count + 'x ' + i.name).join('|') === '1x Apfelschorle|3x Marlboro Rot 10 €', 'Bestellliste alphabetisch, ohne Nullen');
+    check(s.suppliers.lekkerland.products.every(p => p.count === 0), 'Zähler danach auf 0');
+
+    // Abhaken
+    click('.orow[data-i="0"]');
+    check(q('.orow[data-i="0"]').classList.contains('done') && getComputedStyle(q('.orow[data-i="0"] .name')).textDecorationLine === 'line-through', 'Abhaken streicht durch');
+    await load();
+    check(q('.orow[data-i="0"]').classList.contains('done') && q('#doneText').textContent.startsWith('1 von 2'), 'Haken bleibt nach Neustart erhalten');
+    click('.orow[data-i="1"]');
+    check(!q('#allDone').hidden, '"Alles eingegeben" bei allen Haken');
+
+    // Zweiter Lieferant ist getrennt
+    click('[data-sup-tab=tabacon]');
+    check(q('.empty') && stored().ui.supplier === 'tabacon', 'Tabacon hat eigene (leere) Bestellliste');
+    click('[data-view-tab=count]');
+    check(q('.empty [data-act=add]'), 'Tabacon hat eigene (leere) Produktliste');
+    click('[data-act=add]');
+    await addProduct('Tabak Pouch');
+    check(stored().suppliers.tabacon.products.length === 1 && stored().suppliers.lekkerland.products.length === 3, 'Listen bleiben getrennt');
+
+    // Leere Bestätigung
+    click('[data-act=toggle-edit]');
+    click('[data-act=confirm]');
+    check(q('#askTitle').textContent === 'Noch nichts ausgewählt' && q('#askNo').hidden, 'Bestätigen ohne Auswahl gibt Hinweis');
+    await answer(true);
+
+    // Löschen
+    click('[data-act=toggle-edit]');
+    click('[data-act=open]');
+    click('#productDlg [data-pact=delete]');
+    await answer(true); await wait(200);
+    check(stored().suppliers.tabacon.products.length === 0, 'Produkt löschen');
+  } catch (e) {
+    check(false, 'Abbruch: ' + e.stack);
+  }
+  const result = (fails ? fails + ' FEHLER' : 'ALLES OK') + '\n' + log.join('\n');
+  document.getElementById('log').textContent = result;
+  document.title = 'fertig';
+  fetch('/__result', { method: 'POST', body: result }).catch(() => {});
+})();
+</script>
+</body>
+</html>
