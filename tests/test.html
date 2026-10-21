@@ -318,10 +318,26 @@ async function reset() {
 
     // ---------- Vorlage aus dem Berichtsheft ----------
     const items = () => stored().tasks.items;
-    check(stored().tasks.seed === 1 && items().filter(t => t.repeat === 'pool').length === 12 && items().filter(t => t.id.startsWith('v-')).length === 25,
-      'Vorlage eingespielt: 13 feste und 12 „Bei Gelegenheit“');
-    check(has('2026-10-27', 'Lotto-Fahrer: Gewinnlose und Kundenkartenanfragen mitgeben') && has('2026-10-26', 'ProGas: Gasflaschenbestand übermitteln'),
-      'Lotto dienstags, ProGas montags');
+    check(stored().tasks.seed === 2 && items().filter(t => t.repeat === 'pool').length === 12 && items().filter(t => t.id.startsWith('v-')).length === 27,
+      'Vorlage eingespielt: 15 feste und 12 „Bei Gelegenheit“');
+    check(has('2026-10-27', 'Lotto-Fahrer: Gewinnlose mitgeben, neue Lose, Plakate und Post annehmen') && has('2026-10-26', 'ProGas: Daten der Autogas-Säule übermitteln'),
+      'Lotto dienstags (ein Punkt), ProGas montags');
+    check(has('2026-11-02', 'Tankautomaten auf Inhalt prüfen') && !has('2026-10-27', 'Tankautomaten auf Inhalt prüfen'), 'Tankautomaten an jedem Frühschicht-Tag');
+    const order27 = w().eval(`tasksFor('2026-10-27')`).map(t => t.title);
+    check(order27.slice(-2).join('|') === 'Parkposi zahlen|Abrechnung' && order27.indexOf('Lekkerland bestellen') < order27.indexOf('Parkposi zahlen'),
+      'Parkposi zahlen und Abrechnung am Ende des Arbeitstags');
+    check(!has('2026-10-31', 'Parkposi zahlen') && !has('2026-10-28', 'Abrechnung'), '… aber nicht am Wochenende oder Schultag');
+
+    // Regelmäßig alle 2 Wochen (MHD)
+    check(has('2026-10-27', 'Mindesthaltbarkeit (MHD) kontrollieren') && !has('2026-10-31', 'Mindesthaltbarkeit (MHD) kontrollieren'),
+      'MHD ist fällig, aber nur an Arbeitstagen');
+    qa('.trow').find(r => r.textContent.includes('Mindesthaltbarkeit')) || click('[data-day="2026-10-27"]');
+    const mhdRow = () => qa('.trow').find(r => r.textContent.includes('Mindesthaltbarkeit'));
+    if (!mhdRow().classList.contains('done')) mhdRow().querySelector('[data-act=task-check]').click();
+    check(items().find(t => t.id === 'v-mhd').lastDone === '2026-10-27' && mhdRow().textContent.includes('zuletzt'), 'MHD abgehakt merkt sich das Datum');
+    check(!has('2026-11-09', 'Mindesthaltbarkeit (MHD) kontrollieren') && has('2026-11-10', 'Mindesthaltbarkeit (MHD) kontrollieren')
+      && !has('2026-11-11', 'Mindesthaltbarkeit (MHD) kontrollieren') && has('2026-11-12', 'Mindesthaltbarkeit (MHD) kontrollieren'),
+      'Erst nach 14 Tagen wieder fällig, bleibt dann stehen (Schultag übersprungen)');
     check(!has('2026-10-28', 'Lieferung auspacken, buchen und verräumen') && has('2026-11-04', 'Lieferung auspacken, buchen und verräumen'),
       'Mittwochs-Lieferung nicht an Schultagen, aber in den Ferien');
     check(has('2026-11-02', 'Backwaren aufbacken') && !has('2026-10-27', 'Backwaren aufbacken') && !has('2026-10-31', 'Auslage und Theke säubern'),
@@ -333,7 +349,30 @@ async function reset() {
       'Auffüllen an jedem Bestelltag');
     w().localStorage.setItem('bestellapp', JSON.stringify({ ...stored(), tasks: { ...stored().tasks, seed: 0 } }));
     await load({ mode: 'tasks', heute: '2026-10-27' });
-    check(items().filter(t => t.id.startsWith('v-')).length === 25, 'Vorlage wird nicht doppelt eingespielt');
+    check(items().filter(t => t.id.startsWith('v-')).length === 27, 'Vorlage wird nicht doppelt eingespielt');
+
+    // Umstellung einer Vorlage von Version 1 (so wie sie auf dem Handy liegt)
+    const v1 = stored();
+    v1.tasks.seed = 1;
+    v1.tasks.items = v1.tasks.items.filter(t => !['v-spuelmaschine', 'v-parkposi', 'v-abrechnung', 'v-gasflaschen', 'v-zeitungen'].includes(t.id));
+    Object.assign(v1.tasks.items.find(t => t.id === 'v-tankautomat'), { repeat: 'pool', shift: 'any' });
+    Object.assign(v1.tasks.items.find(t => t.id === 'v-mhd'), { repeat: 'workdays', every: null, lastDone: null });
+    v1.tasks.items.push({ id: 'v-wischen', title: 'Kühlschränke und Schränke auswischen', repeat: 'workdays', shift: 'any' },
+      { id: 'v-lotto-annahme', title: 'Lotto-Lieferung: neue Lose einbuchen', repeat: 'weekly', weekday: 2, shift: 'work' });
+    w().localStorage.setItem('bestellapp', JSON.stringify(v1));
+    await load({ mode: 'tasks', heute: '2026-10-27' });
+    const after = items();
+    check(!after.some(t => ['v-wischen', 'v-lotto-annahme'].includes(t.id)), 'Umstellung: Auswischen und zweiter Lotto-Punkt entfernt');
+    check(after.find(t => t.id === 'v-tankautomat').repeat === 'workdays' && after.find(t => t.id === 'v-mhd').repeat === 'interval'
+      && after.find(t => t.id === 'v-mhd').every === 14, 'Umstellung: Tankautomat Frühschicht, MHD alle 2 Wochen');
+    check(['v-spuelmaschine', 'v-parkposi', 'v-abrechnung', 'v-gasflaschen'].every(id => after.some(t => t.id === id)), 'Umstellung: neue Aufgaben ergänzt');
+    check(!after.some(t => t.id === 'v-zeitungen'), 'Umstellung: selbst gelöschte Aufgaben kommen nicht zurück');
+
+    click('[data-act=task-add]');
+    q('#tRepeat input[value=interval]').checked = true;
+    q('#tRepeat').dispatchEvent(new (w().Event)('change', { bubbles: true }));
+    check(!q('#tEveryField').hidden && q('#tShiftField').hidden && q('#tEvery').value === '14', 'Neue Aufgabe „Regelmäßig“: alle 2 Wochen vorausgewählt');
+    click('#taskDlg [data-tact=cancel]');
 
     // ---------- Bei Gelegenheit ----------
     check(q('details.pool') && !q('details.pool').open, 'Dienstag: „Bei Gelegenheit“ ist zugeklappt');

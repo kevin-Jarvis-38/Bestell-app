@@ -103,10 +103,20 @@ function appliesOn(t, k) {
   if (t.repeat === 'daily') return true;
   if (t.repeat === 'workdays') return info.kind === 'work';
   if (t.repeat === 'weekly') return weekday(k) === t.weekday;
+  // Regelmäßig: ab dem ersten fälligen Arbeitstag, bis sie abgehakt ist; danach wieder nach `every` Tagen
+  if (t.repeat === 'interval') {
+    if (info.kind !== 'work') return false;
+    return !t.lastDone || k === t.lastDone || daysBetween(t.lastDone, k) >= t.every;
+  }
   return false;
 }
 
-const tasksFor = k => [...state.tasks.items.filter(t => appliesOn(t, k)), ...autoTasks(k)];
+// Reihenfolge: eigene Aufgaben, dann Auffüllen und Bestellungen, zum Schluss das Ende des Arbeitstags
+function tasksFor(k) {
+  const items = state.tasks.items.filter(t => appliesOn(t, k));
+  return [...items.filter(t => !t.endOfDay), ...autoTasks(k), ...items.filter(t => t.endOfDay)];
+}
+const EVERY_LABEL = { 7: 'jede Woche', 14: 'alle 2 Wochen', 21: 'alle 3 Wochen', 28: 'alle 4 Wochen' };
 // „Bei Gelegenheit“: am längsten nicht erledigte zuerst
 const poolTasks = () => state.tasks.items.filter(t => t.repeat === 'pool').sort((a, b) => (a.lastDone || '').localeCompare(b.lastDone || ''));
 const isTaskDone = (id, k) => (state.tasks.done[k] || []).includes(id);
@@ -116,6 +126,7 @@ const overdue = today => state.tasks.items
 
 function repeatLabel(t) {
   if (t.repeat === 'pool') return t.lastDone ? `zuletzt ${fmtShort(t.lastDone)}` : 'noch nie erledigt';
+  if (t.repeat === 'interval') return (EVERY_LABEL[t.every] || `alle ${t.every} Tage`) + (t.lastDone ? ` · zuletzt ${fmtShort(t.lastDone)}` : '');
   const base = { once: 'einmalig', weekly: `jeden ${WD_LONG[t.weekday]}`, workdays: 'an jedem Arbeitstag', daily: 'jeden Tag' }[t.repeat];
   const shift = { work: ' · nur Arbeitstage', frueh: ' · nur Frühschicht-Wochen', spaet: ' · nur Spätschicht-Wochen' }[t.shift] || '';
   return base + shift;
@@ -123,43 +134,72 @@ function repeatLabel(t) {
 
 // ---------- Vorlage aus dem Berichtsheft (Wochenablauf laut Kevin, 21.10.2026) ----------
 
-const SEED_VERSION = 1;
+// since = Vorlagen-Version, mit der die Aufgabe dazukam; end = steht am Ende des Arbeitstags
+const SEED_VERSION = 2;
 const SEED = [
-  ['v-aufsperren', 'Laden aufsperren und Kasse vorbereiten', 'workdays', null, 'frueh'],
-  ['v-zeitungen', 'Zeitungen auslegen', 'workdays', null, 'frueh'],
-  ['v-aufbacken', 'Backwaren aufbacken', 'workdays', null, 'frueh'],
-  ['v-mo-lieferung', 'Lieferung auspacken, buchen und verräumen', 'weekly', 1, 'work'],
-  ['v-progas', 'ProGas: Gasflaschenbestand übermitteln', 'weekly', 1, 'work'],
-  ['v-remission', 'Zeitungen remissionieren (retour)', 'weekly', 1, 'work'],
-  ['v-lotto-abgabe', 'Lotto-Fahrer: Gewinnlose und Kundenkartenanfragen mitgeben', 'weekly', 2, 'work'],
-  ['v-lotto-annahme', 'Lotto-Lieferung: neue Lose einbuchen, Plakate aufhängen, Post annehmen', 'weekly', 2, 'work'],
-  ['v-mi-lieferung', 'Lieferung auspacken, buchen und verräumen', 'weekly', 3, 'work'],
-  ['v-do-gross', 'Ruhiger Tag: eine größere Aufgabe aus „Bei Gelegenheit“ erledigen', 'weekly', 4, 'work'],
-  ['v-wischen', 'Kühlschränke und Schränke auswischen', 'workdays', null, 'any'],
-  ['v-auslage', 'Auslage und Theke säubern', 'workdays', null, 'any'],
-  ['v-mhd', 'Mindesthaltbarkeit (MHD) kontrollieren', 'workdays', null, 'any'],
-  ['v-inv-lager', 'Teilinventur im Lager', 'pool'],
-  ['v-inv-tabak', 'Inventur Tabakwaren', 'pool'],
-  ['v-inv-getraenke', 'Inventur Getränke und Kastenwaren', 'pool'],
-  ['v-lager', 'Lagerbestände prüfen und neu sortieren', 'pool'],
-  ['v-preise', 'Preisauszeichnung kontrollieren und aktualisieren', 'pool'],
-  ['v-stammdaten', 'Artikelstammdaten pflegen, neue Produkte anlegen', 'pool'],
-  ['v-flaeche', 'Verkaufsfläche umgestalten, Aktionsware platzieren', 'pool'],
-  ['v-ablage', 'Rechnungen und Lieferscheine ablegen', 'pool'],
-  ['v-preisvergleich', 'Preise bei verschiedenen Lieferanten vergleichen', 'pool'],
-  ['v-mhd-doku', 'Nicht verkaufsfähige Ware dokumentieren', 'pool'],
-  ['v-saugen', 'Verkaufsraum saugen', 'pool'],
-  ['v-tankautomat', 'Tankautomaten auf Inhalt prüfen', 'pool'],
+  { id: 'v-aufsperren', title: 'Laden aufsperren und Kasse vorbereiten', repeat: 'workdays', shift: 'frueh', since: 1 },
+  { id: 'v-zeitungen', title: 'Zeitungen auslegen', repeat: 'workdays', shift: 'frueh', since: 1 },
+  { id: 'v-aufbacken', title: 'Backwaren aufbacken', repeat: 'workdays', shift: 'frueh', since: 1 },
+  { id: 'v-tankautomat', title: 'Tankautomaten auf Inhalt prüfen', repeat: 'workdays', shift: 'frueh', since: 1 },
+  { id: 'v-mo-lieferung', title: 'Lieferung auspacken, buchen und verräumen', repeat: 'weekly', wd: 1, shift: 'work', since: 1 },
+  { id: 'v-progas', title: 'ProGas: Daten der Autogas-Säule übermitteln', repeat: 'weekly', wd: 1, shift: 'work', since: 1 },
+  { id: 'v-remission', title: 'Zeitungen remissionieren (retour)', repeat: 'weekly', wd: 1, shift: 'work', since: 1 },
+  { id: 'v-lotto-abgabe', title: 'Lotto-Fahrer: Gewinnlose mitgeben, neue Lose, Plakate und Post annehmen', repeat: 'weekly', wd: 2, shift: 'work', since: 1 },
+  { id: 'v-mi-lieferung', title: 'Lieferung auspacken, buchen und verräumen', repeat: 'weekly', wd: 3, shift: 'work', since: 1 },
+  { id: 'v-do-gross', title: 'Ruhiger Tag: eine größere Aufgabe aus „Bei Gelegenheit“ erledigen', repeat: 'weekly', wd: 4, shift: 'work', since: 1 },
+  { id: 'v-auslage', title: 'Auslage und Theke säubern', repeat: 'workdays', since: 1 },
+  { id: 'v-mhd', title: 'Mindesthaltbarkeit (MHD) kontrollieren', repeat: 'interval', every: 14, since: 1 },
+  { id: 'v-spuelmaschine', title: 'Spülmaschine säubern', repeat: 'interval', every: 14, since: 2 },
+  { id: 'v-parkposi', title: 'Parkposi zahlen', repeat: 'workdays', end: true, since: 2 },
+  { id: 'v-abrechnung', title: 'Abrechnung', repeat: 'workdays', end: true, since: 2 },
+  { id: 'v-inv-lager', title: 'Teilinventur im Lager', repeat: 'pool', since: 1 },
+  { id: 'v-inv-tabak', title: 'Inventur Tabakwaren', repeat: 'pool', since: 1 },
+  { id: 'v-inv-getraenke', title: 'Inventur Getränke und Kastenwaren', repeat: 'pool', since: 1 },
+  { id: 'v-lager', title: 'Lagerbestände prüfen und neu sortieren', repeat: 'pool', since: 1 },
+  { id: 'v-preise', title: 'Preisauszeichnung kontrollieren und aktualisieren', repeat: 'pool', since: 1 },
+  { id: 'v-stammdaten', title: 'Artikelstammdaten pflegen, neue Produkte anlegen', repeat: 'pool', since: 1 },
+  { id: 'v-flaeche', title: 'Verkaufsfläche umgestalten, Aktionsware platzieren', repeat: 'pool', since: 1 },
+  { id: 'v-ablage', title: 'Rechnungen und Lieferscheine ablegen', repeat: 'pool', since: 1 },
+  { id: 'v-preisvergleich', title: 'Preise bei verschiedenen Lieferanten vergleichen', repeat: 'pool', since: 1 },
+  { id: 'v-mhd-doku', title: 'Nicht verkaufsfähige Ware dokumentieren', repeat: 'pool', since: 1 },
+  { id: 'v-saugen', title: 'Verkaufsraum saugen', repeat: 'pool', since: 1 },
+  { id: 'v-gasflaschen', title: 'Gasflaschen bestellen', repeat: 'pool', since: 2 },
 ];
+// Was sich an schon eingespielten Vorlagen-Aufgaben ändert (Wünsche des Nutzers vom 21.10.2026)
+const SEED_UPDATES = {
+  2: { changed: ['v-tankautomat', 'v-mhd', 'v-progas', 'v-lotto-abgabe'], removed: ['v-lotto-annahme', 'v-wischen'] },
+};
 
-// Einmalig ergänzen; Aufgaben mit gleichem Namen (z. B. selbst angelegt) werden nicht doppelt angelegt
+const seedFields = s => ({
+  title: s.title,
+  repeat: s.repeat,
+  weekday: s.wd ?? null,
+  shift: s.shift || 'any',
+  every: s.every || null,
+  endOfDay: !!s.end,
+});
+
+// Neue Vorlagen-Aufgaben ergänzen und geänderte anpassen. Selbst gelöschte kommen nicht zurück,
+// Aufgaben mit gleichem Namen (z. B. selbst angelegt) werden nicht doppelt angelegt.
 function seedTasks() {
-  if ((state.tasks.seed || 0) >= SEED_VERSION) return;
+  const from = state.tasks.seed || 0;
+  if (from >= SEED_VERSION) return;
+  if (from > 0) {
+    for (let v = from + 1; v <= SEED_VERSION; v++) {
+      const u = SEED_UPDATES[v] || { changed: [], removed: [] };
+      state.tasks.items = state.tasks.items.filter(t => !u.removed.includes(t.id));
+      for (const id of u.changed) {
+        const t = state.tasks.items.find(x => x.id === id);
+        if (t) Object.assign(t, seedFields(SEED.find(s => s.id === id)));
+      }
+    }
+  }
   const today = todayKey();
   const have = new Set(state.tasks.items.map(t => t.repeat + '|' + (t.weekday ?? '') + '|' + t.title.toLowerCase()));
-  for (const [id, title, repeat, wd = null, shift = 'any'] of SEED) {
-    if (have.has(repeat + '|' + (wd ?? '') + '|' + title.toLowerCase()) || state.tasks.items.some(t => t.id === id)) continue;
-    state.tasks.items.push({ id, title, repeat, date: null, weekday: wd, shift: repeat === 'pool' ? 'any' : shift, created: today, lastDone: null });
+  for (const s of SEED) {
+    if (s.since <= from || state.tasks.items.some(t => t.id === s.id)) continue;
+    if (have.has(s.repeat + '|' + (s.wd ?? '') + '|' + s.title.toLowerCase())) continue;
+    state.tasks.items.push({ id: s.id, date: null, created: today, lastDone: null, ...seedFields(s) });
   }
   state.tasks.seed = SEED_VERSION;
   save();
@@ -289,13 +329,15 @@ function toggleTask(id, k) {
   if (i >= 0) list.splice(i, 1);
   else list.push(id);
   if (!list.length) delete state.tasks.done[k];
-  const pool = state.tasks.items.find(t => t.id === id && t.repeat === 'pool');
-  if (pool && i < 0) {
-    pool.prevDone = pool.lastDone;
-    pool.lastDone = k;
-  } else if (pool && pool.lastDone === k) {
-    pool.lastDone = pool.prevDone || null;
+  // „Bei Gelegenheit“ und „Regelmäßig“ merken sich, wann sie zuletzt erledigt wurden
+  const tracked = state.tasks.items.find(t => t.id === id && (t.repeat === 'pool' || t.repeat === 'interval'));
+  if (tracked && i < 0) {
+    tracked.prevDone = tracked.lastDone;
+    tracked.lastDone = k;
+  } else if (tracked && tracked.lastDone === k) {
+    tracked.lastDone = tracked.prevDone || null;
   }
+  const pool = tracked && tracked.repeat === 'pool';
   save();
   buzz();
   const y = scrollY;
@@ -425,10 +467,12 @@ function openTask(id) {
     ['weekly', `Jeden ${WD_LONG[wd]}`],
     ['workdays', 'An jedem Arbeitstag'],
     ['daily', 'Jeden Tag'],
+    ['interval', 'Regelmäßig, z. B. alle 2 Wochen (bleibt stehen, bis erledigt)'],
     ['pool', 'Bei Gelegenheit (ohne festen Tag)'],
   ].map(([v, l]) => `<label class="chk"><input type="radio" name="repeat" value="${v}">${l}</label>`).join('');
   $(`#tRepeat input[value="${t ? t.repeat : 'once'}"]`).checked = true;
   $('#tShift').value = t ? t.shift : 'any';
+  $('#tEvery').value = String(t && t.every ? t.every : 14);
   syncShiftField();
   taskDlg.querySelector('[data-tact=delete]').hidden = !t;
   taskDlg.showModal();
@@ -436,7 +480,9 @@ function openTask(id) {
 }
 
 function syncShiftField() {
-  $('#tShiftField').hidden = ['once', 'pool'].includes($('#tRepeat input:checked').value);
+  const repeat = $('#tRepeat input:checked').value;
+  $('#tShiftField').hidden = ['once', 'pool', 'interval'].includes(repeat);
+  $('#tEveryField').hidden = $('#tEveryHint').hidden = repeat !== 'interval';
 }
 $('#tRepeat').addEventListener('change', syncShiftField);
 
@@ -459,7 +505,8 @@ function saveTask() {
     repeat,
     date: repeat === 'once' ? td.anchor : null,
     weekday: repeat === 'weekly' ? td.wd : null,
-    shift: ['once', 'pool'].includes(repeat) ? 'any' : $('#tShift').value,
+    shift: ['once', 'pool', 'interval'].includes(repeat) ? 'any' : $('#tShift').value,
+    every: repeat === 'interval' ? Number($('#tEvery').value) : null,
   });
   save();
   taskDlg.close();

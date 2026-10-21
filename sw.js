@@ -1,6 +1,6 @@
 // Hält die App-Dateien offline vor. Nach jeder Änderung an der App die Nummer erhöhen,
 // sonst behält das Handy die alte Version.
-const CACHE = 'bestellapp-8';
+const CACHE = 'bestellapp-9';
 const FILES = ['./', './index.html', './app.js', './aufgaben.js', './style.css', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
   './fonts/nunito-latin.woff2'];
 

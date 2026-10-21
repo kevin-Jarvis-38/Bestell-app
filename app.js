@@ -6,7 +6,7 @@ const SUPPLIERS = [
   { key: 'lekkerland', name: 'Lekkerland', color: '#e03131' },
   { key: 'tabacon', name: 'Tabacon', color: '#1c7ed6' },
 ];
-const VERSION = '3.1';
+const VERSION = '3.2';
 const STORAGE_KEY = 'bestellapp';
 const PHOTO_MAX = 480; // längste Bildkante in Pixeln, hält die Fotos klein
 const BACKUP_DAYS = 7; // so alt darf die letzte Sicherung sein, bevor die App daran erinnert
@@ -56,12 +56,14 @@ function normalizeTasks(t) {
     out.items.push({
       id: String(x.id),
       title: String(x.title),
-      repeat: ['once', 'weekly', 'workdays', 'daily', 'pool'].includes(x.repeat) ? x.repeat : 'once',
+      repeat: ['once', 'weekly', 'workdays', 'daily', 'interval', 'pool'].includes(x.repeat) ? x.repeat : 'once',
       date: x.date ? String(x.date) : null,
       weekday: Number.isInteger(x.weekday) ? x.weekday : null,
       shift: ['work', 'frueh', 'spaet'].includes(x.shift) ? x.shift : 'any',
       created: x.created ? String(x.created) : null,
-      lastDone: x.lastDone ? String(x.lastDone) : null, // nur bei „Bei Gelegenheit“
+      every: Number.isInteger(x.every) && x.every > 0 ? x.every : x.repeat === 'interval' ? 14 : null,
+      endOfDay: !!x.endOfDay,
+      lastDone: x.lastDone ? String(x.lastDone) : null, // nur bei „Bei Gelegenheit“ und „Regelmäßig“
       prevDone: x.prevDone ? String(x.prevDone) : null,
     });
   }
