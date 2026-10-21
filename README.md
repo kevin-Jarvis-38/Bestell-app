@@ -5,7 +5,7 @@ Offline-App fürs Handy, um die Bestellungen bei Lekkerland und Tabacon vorzuber
 - **Durchgehen:** alle Produkte in Laufweg-Reihenfolge, mit Foto und +1/−1.
 - **Liste bestätigen:** fragt „Bist du sicher?“, macht daraus eine alphabetische Bestellliste und setzt die Zähler auf 0.
 - **Bestellliste:** abhaken, was am PC eingegeben ist (wird durchgestrichen).
-- Alles wird sofort auf dem Handy gespeichert. Sicherung über das Menü ⋮.
+- Alles wird sofort auf dem Handy gespeichert. Sicherung über das Wolken-Symbol oben rechts.
 
 ## Technik
 

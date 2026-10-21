@@ -59,7 +59,7 @@ button:disabled { cursor: default; }
   color: var(--muted);
 }
 .sup-tabs button[aria-selected="true"] { background: var(--accent); color: var(--on-accent); }
-.icon-btn { width: 44px; height: 44px; border: 0; background: transparent; font-size: 24px; border-radius: 10px; }
+.icon-btn { width: 44px; height: 44px; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); border-radius: 10px; }
 .view-tabs { display: flex; max-width: 720px; margin: 0 auto; }
 .view-tabs button {
   flex: 1;
