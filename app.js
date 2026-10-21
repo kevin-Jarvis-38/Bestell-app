@@ -6,7 +6,7 @@ const SUPPLIERS = [
   { key: 'lekkerland', name: 'Lekkerland', color: '#e03131' },
   { key: 'tabacon', name: 'Tabacon', color: '#1c7ed6' },
 ];
-const VERSION = '2.2';
+const VERSION = '3.0';
 const STORAGE_KEY = 'bestellapp';
 const PHOTO_MAX = 480; // längste Bildkante in Pixeln, hält die Fotos klein
 const BACKUP_DAYS = 7; // so alt darf die letzte Sicherung sein, bevor die App daran erinnert
@@ -33,13 +33,37 @@ const TRASH = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" strok
 //         { id, kind: 'product', name, photo, soll, sup: { lekkerland: true, … }, count: { lekkerland: 0, … } }.
 // orders: je Lieferant { started, done: { produktId: Menge beim Abhaken } }. Die Bestellliste selbst sind alle
 //         Produkte mit Zähler > 0; abgehakt ist ein Produkt, solange seine Menge noch der beim Abhaken entspricht.
+// tasks:  eigene Aufgaben { items: [{ id, title, repeat, date, weekday, shift, created }], done: { "JJJJ-MM-TT": [ids] } },
+//         siehe aufgaben.js.
 
 const emptyOrder = () => ({ started: null, done: {} });
 
 function emptyState() {
-  const s = { v: 3, route: [], orders: {}, ui: { supplier: SUPPLIERS[0].key, view: 'count', scroll: {}, lastBackup: null, newSup: null } };
+  const s = {
+    v: 3, route: [], orders: {}, tasks: { items: [], done: {} },
+    ui: { mode: 'tasks', supplier: SUPPLIERS[0].key, view: 'count', scroll: {}, lastBackup: null, newSup: null },
+  };
   for (const sup of SUPPLIERS) s.orders[sup.key] = emptyOrder();
   return s;
+}
+
+function normalizeTasks(t) {
+  const out = { items: [], done: {} };
+  if (!t || typeof t !== 'object') return out;
+  for (const x of Array.isArray(t.items) ? t.items : []) {
+    if (!x || !x.id || !x.title) continue;
+    out.items.push({
+      id: String(x.id),
+      title: String(x.title),
+      repeat: ['once', 'weekly', 'workdays', 'daily'].includes(x.repeat) ? x.repeat : 'once',
+      date: x.date ? String(x.date) : null,
+      weekday: Number.isInteger(x.weekday) ? x.weekday : null,
+      shift: ['frueh', 'spaet'].includes(x.shift) ? x.shift : 'any',
+      created: x.created ? String(x.created) : null,
+    });
+  }
+  for (const [k, ids] of Object.entries(t.done || {})) if (Array.isArray(ids) && ids.length) out.done[k] = ids.map(String);
+  return out;
 }
 
 function normalizeOrder(o, route, k) {
@@ -106,6 +130,8 @@ function normalize(s) {
     const o = s.orders ? s.orders[sup.key] : s.suppliers && s.suppliers[sup.key] && s.suppliers[sup.key].order;
     out.orders[sup.key] = normalizeOrder(o, out.route, sup.key);
   }
+  out.tasks = normalizeTasks(s.tasks);
+  if (out.ui.mode !== 'order') out.ui.mode = 'tasks';
   if (!SUPPLIERS.some(x => x.key === out.ui.supplier)) out.ui.supplier = SUPPLIERS[0].key;
   if (out.ui.view !== 'order') out.ui.view = 'count';
   if (!out.ui.scroll || typeof out.ui.scroll !== 'object') out.ui.scroll = {};
@@ -138,6 +164,7 @@ function save() {
 }
 
 let state = loadState();
+state.ui.mode = 'tasks'; // die App startet immer bei den Aufgaben von heute
 let editing = false;
 let search = '';
 const supName = () => SUPPLIERS.find(s => s.key === state.ui.supplier).name;
@@ -258,9 +285,8 @@ new ResizeObserver(() => {
   document.documentElement.style.setProperty('--title-h', titleH + 'px');
   document.documentElement.style.setProperty('--head', header.offsetHeight - titleH + 'px');
 }).observe(header);
-$('#today').textContent = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
 
-const scrollKey = () => state.ui.supplier + ':' + state.ui.view;
+const scrollKey = () => (state.ui.mode === 'tasks' ? 'tasks' : state.ui.supplier + ':' + state.ui.view);
 let scrollTimer;
 let chipFrame = 0;
 addEventListener('scroll', () => {
@@ -280,7 +306,7 @@ function rememberScroll() {
 function renderChips() {
   const chips = $('#secChips');
   const route = editing ? state.route : visibleRoute(state.ui.supplier);
-  const sections = state.ui.view === 'count' && !search ? route.filter(isSection) : [];
+  const sections = state.ui.mode === 'order' && state.ui.view === 'count' && !search ? route.filter(isSection) : [];
   chips.hidden = !sections.length;
   chips.innerHTML = sections.map(s => `<button data-sec="${s.id}">${s.emoji ? esc(s.emoji) + ' ' : ''}${esc(s.name)}</button>`).join('');
   markChip();
@@ -313,11 +339,22 @@ $('#secChips').addEventListener('click', e => {
 // ---------- Anzeige ----------
 
 function render() {
+  const tasks = state.ui.mode === 'tasks';
+  document.body.dataset.mode = state.ui.mode;
   document.body.dataset.sup = state.ui.supplier;
-  document.querySelector('meta[name=theme-color]').content = SUPPLIERS.find(s => s.key === state.ui.supplier).color;
+  for (const b of document.querySelectorAll('[data-mode-tab]')) b.setAttribute('aria-current', b.dataset.modeTab === state.ui.mode ? 'page' : 'false');
+  $('#appTitle').textContent = tasks ? 'Aufgaben' : 'Bestellung';
+  document.querySelector('meta[name=theme-color]').content = tasks ? TASKS_COLOR : SUPPLIERS.find(s => s.key === state.ui.supplier).color;
   main.classList.remove('enter');
   void main.offsetWidth; // Einblend-Animation neu starten
   main.classList.add('enter');
+  if (tasks) {
+    renderChips();
+    renderTasks();
+    scrollTo(0, 0);
+    return;
+  }
+  updateTaskBadge();
   for (const b of document.querySelectorAll('[data-sup-tab]')) b.setAttribute('aria-selected', b.dataset.supTab === state.ui.supplier);
   for (const b of document.querySelectorAll('[data-view-tab]')) b.setAttribute('aria-selected', b.dataset.viewTab === state.ui.view);
   if (state.ui.view === 'order') renderOrder();
@@ -665,6 +702,16 @@ $('.sup-tabs').addEventListener('click', e => {
   save();
   render();
 });
+$('#modeNav').addEventListener('click', e => {
+  const b = e.target.closest('[data-mode-tab]');
+  if (!b || b.dataset.modeTab === state.ui.mode) return;
+  rememberScroll();
+  state.ui.mode = b.dataset.modeTab;
+  editing = false;
+  search = '';
+  save();
+  render();
+});
 $('.view-tabs').addEventListener('click', e => {
   const b = e.target.closest('[data-view-tab]');
   if (!b || b.dataset.viewTab === state.ui.view) return;
@@ -948,7 +995,7 @@ const SNAPSHOT_REASONS = { weekly: 'automatisch', restore: 'vor dem Wiederherste
 
 async function takeSnapshot(reason) {
   const ids = new Set(state.route.filter(p => isProduct(p) && p.photo).map(p => p.id));
-  const snap = { created: Date.now(), reason, route: state.route, orders: state.orders, photos: {} };
+  const snap = { created: Date.now(), reason, route: state.route, orders: state.orders, tasks: state.tasks, photos: {} };
   for (const [id, blob] of await loadAllPhotos()) if (ids.has(id)) snap.photos[id] = blob;
   await writeTx('punkte', s => s.put(snap, snap.created));
   const old = (await readKeys('punkte')).sort((a, b) => b - a).slice(SNAPSHOT_KEEP);
@@ -956,7 +1003,7 @@ async function takeSnapshot(reason) {
 }
 
 async function weeklySnapshot() {
-  if (!state.route.some(isProduct)) return;
+  if (!state.route.some(isProduct) && !state.tasks.items.length) return;
   const newest = Math.max(0, ...await readKeys('punkte'));
   if (Date.now() - newest >= SNAPSHOT_DAYS * 864e5) await takeSnapshot('weekly');
 }
@@ -967,7 +1014,7 @@ async function renderSnapshots() {
     const snaps = [...(await readAll('punkte')).values()].sort((a, b) => b.created - a.created);
     list.innerHTML = snaps.length
       ? snaps.map(s => `<button type="button" class="snap" data-snap="${s.created}">
-          <span><b>${fmtDateTime(s.created)}</b><small>${s.route.filter(isProduct).length} Produkte · ${SNAPSHOT_REASONS[s.reason] || ''}</small></span>
+          <span><b>${fmtDateTime(s.created)}</b><small>${s.route.filter(isProduct).length} Produkte · ${((s.tasks && s.tasks.items) || []).length} Aufgaben · ${SNAPSHOT_REASONS[s.reason] || ''}</small></span>
           <span class="go">Zurückholen</span></button>`).join('')
       : '<p class="hint">Noch keiner. Der erste entsteht automatisch, sobald Produkte angelegt sind.</p>';
   } catch (err) {
@@ -975,7 +1022,7 @@ async function renderSnapshots() {
   }
 }
 
-async function replaceAll(route, orders, photos) {
+async function replaceAll(route, orders, tasks, photos) {
   await clearPhotos();
   for (const url of photoUrls.values()) URL.revokeObjectURL(url);
   photoUrls.clear();
@@ -983,7 +1030,7 @@ async function replaceAll(route, orders, photos) {
     await putPhoto(id, blob);
     setPhotoUrl(id, blob);
   }
-  state = normalize({ route, orders, ui: { ...state.ui, scroll: {} } });
+  state = normalize({ route, orders, tasks, ui: { ...state.ui, scroll: {} } });
   editing = false;
   search = '';
   save();
@@ -1005,7 +1052,7 @@ $('#snapList').addEventListener('click', async e => {
   })) return;
   try {
     await takeSnapshot('restore');
-    await replaceAll(snap.route, snap.orders, Object.entries(snap.photos || {}));
+    await replaceAll(snap.route, snap.orders, snap.tasks, Object.entries(snap.photos || {}));
   } catch (err) {
     alert('Zurückholen fehlgeschlagen: ' + err.message);
   }
@@ -1026,7 +1073,7 @@ const blobToDataUrl = blob => new Promise((res, rej) => {
 $('#exportBtn').addEventListener('click', async () => {
   try {
     const photos = await loadAllPhotos();
-    const out = { app: 'bestellapp', version: 2, exported: new Date().toISOString(), route: state.route, orders: state.orders, photos: {} };
+    const out = { app: 'bestellapp', version: 3, exported: new Date().toISOString(), route: state.route, orders: state.orders, tasks: state.tasks, photos: {} };
     for (const [id, blob] of photos) out.photos[id] = await blobToDataUrl(blob);
     const file = new Blob([JSON.stringify(out)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -1056,14 +1103,15 @@ $('#importInput').addEventListener('change', async e => {
     return;
   }
   // Sicherungen der alten Fassung (zwei Listen) werden dabei automatisch umgebaut
-  const fresh = normalize({ route: data.route, suppliers: data.suppliers, orders: data.orders, ui: { ...state.ui, scroll: {} } });
+  const fresh = normalize({ route: data.route, suppliers: data.suppliers, orders: data.orders, tasks: data.tasks, ui: { ...state.ui, scroll: {} } });
   const n = fresh.route.filter(isProduct).length;
-  if (!await ask({ title: 'Sicherung laden?', text: `Die Sicherung enthält ${n} Produkte. Alles, was gerade in der App ist, wird dadurch ersetzt.`, yes: 'Laden', no: 'Abbrechen', danger: true })) return;
+  const text = `Die Sicherung enthält ${n} Produkte und ${fresh.tasks.items.length} Aufgaben. Alles, was gerade in der App ist, wird dadurch ersetzt.`;
+  if (!await ask({ title: 'Sicherung laden?', text, yes: 'Laden', no: 'Abbrechen', danger: true })) return;
   try {
     const photos = [];
     for (const [id, dataUrl] of Object.entries(data.photos || {})) photos.push([id, await (await fetch(dataUrl)).blob()]);
-    if (state.route.some(isProduct)) await takeSnapshot('import');
-    await replaceAll(fresh.route, fresh.orders, photos);
+    if (state.route.some(isProduct) || state.tasks.items.length) await takeSnapshot('import');
+    await replaceAll(fresh.route, fresh.orders, fresh.tasks, photos);
   } catch (err) {
     alert('Laden fehlgeschlagen: ' + err.message);
   }
@@ -1082,7 +1130,7 @@ async function init() {
       else deletePhoto(id).catch(console.error); // Foto eines gelöschten Produkts
     }
     // Fotos in die schon angezeigte Liste einsetzen, ohne die Scrollposition zu verändern
-    if (photoUrls.size && state.ui.view === 'count' && $('#list')) {
+    if (photoUrls.size && state.ui.mode === 'order' && state.ui.view === 'count' && $('#list')) {
       const y = scrollY;
       renderList();
       scrollTo(0, y);
@@ -1094,4 +1142,4 @@ async function init() {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(console.error);
 }
-init();
+document.addEventListener('DOMContentLoaded', init); // erst wenn auch aufgaben.js geladen ist

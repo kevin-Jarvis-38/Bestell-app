@@ -1,6 +1,21 @@
 # Bestell-App
 
-Offline-App fürs Handy, um die Bestellungen bei Lekkerland und Tabacon vorzubereiten.
+Offline-App fürs Handy mit zwei getrennten Bereichen (Umschalter unten): **Aufgaben** und **Bestellung**.
+Die App startet immer bei den Aufgaben von heute.
+
+## Aufgaben (`aufgaben.js`)
+
+- Tagesansicht mit Wochenleiste, Pfeilen, „Heute“, Wischen zum Tagwechsel und Monatsansicht.
+- Jeder Tag zeigt den Schichtplan (wie `scripts/schichtplan.py` im JARVIS-Projekt): Früh-/Spätschicht im
+  Wochenwechsel ab 19.10.2026, mittwochs Berufsschule bis Ende Februar 2027 (außer Ferien), Feiertage, Ferien.
+- Automatische Aufgaben: **Lekkerland bestellen** in der Spätschicht-Woche dienstags, in der Frühschicht-Woche
+  mittwochs, falls der Mittwoch kein Arbeitstag ist dienstags. **Tabacon bestellen** freitags, an einem Feiertag
+  donnerstags. Ein Tipp darauf öffnet die Bestellung des Lieferanten.
+- Eigene Aufgaben: einmalig, jede Woche an einem Wochentag, an jedem Arbeitstag oder jeden Tag, wahlweise nur in
+  Früh- oder Spätschicht-Wochen. Offene einmalige Aufgaben vergangener Tage erscheinen heute unter „Noch offen“.
+- Ändert sich der Schichtplan (z. B. neues Schuljahr), müssen die Konstanten oben in `aufgaben.js` angepasst werden.
+
+## Bestellung
 
 - **Laufweg:** ein gemeinsamer Weg durch den Laden für alle Lieferanten, unterteilt in Abschnitte (Überschriften).
   Jedes Produkt hat Foto, Soll-Bestand und Häkchen, bei welchen Lieferanten es bestellt wird.

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#e03131">
+  <meta name="theme-color" content="#0ca678">
   <title>Bestellung</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
@@ -11,11 +11,11 @@
   <link rel="preload" href="fonts/nunito-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
-<body data-sup="lekkerland">
+<body data-sup="lekkerland" data-mode="tasks">
   <header class="top">
     <div class="title-row" id="titleRow">
       <div>
-        <h1 class="title">Bestellung</h1>
+        <h1 class="title" id="appTitle">Aufgaben</h1>
         <div class="subtitle" id="today"></div>
       </div>
       <button class="icon-btn" id="menuBtn" aria-label="Sicherung">
@@ -24,18 +24,83 @@
         </svg>
       </button>
     </div>
-    <div class="sup-tabs" role="tablist" aria-label="Lieferant"></div>
-    <div class="view-tabs" role="tablist">
+    <div class="sup-tabs order-only" role="tablist" aria-label="Lieferant"></div>
+    <div class="view-tabs order-only" role="tablist">
       <button role="tab" data-view-tab="count">Durchgehen <span class="badge" id="badgeCount"></span></button>
       <button role="tab" data-view-tab="order">Bestellliste <span class="badge" id="badgeOrder"></span></button>
     </div>
-    <div class="sec-chips" id="secChips" hidden></div>
+    <div class="sec-chips order-only" id="secChips" hidden></div>
+    <div class="week-nav tasks-only">
+      <button class="nav-btn" data-wk="-1" aria-label="Woche zurück">‹</button>
+      <button class="month-btn" id="monthBtn"></button>
+      <button class="today-btn" id="todayBtn">Heute</button>
+      <button class="nav-btn" data-wk="1" aria-label="Woche vor">›</button>
+    </div>
+    <div class="week-strip tasks-only" id="weekStrip"></div>
   </header>
 
   <main id="main"></main>
 
+  <nav class="mode-nav" id="modeNav">
+    <button data-mode-tab="tasks">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/>
+      </svg>
+      Aufgaben <span class="badge" id="badgeTasks"></span>
+    </button>
+    <button data-mode-tab="order">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6.2"/><circle cx="10" cy="20.5" r="1.2"/><circle cx="17" cy="20.5" r="1.2"/>
+      </svg>
+      Bestellung
+    </button>
+  </nav>
+
+  <!-- Aufgabe anlegen / bearbeiten -->
+  <dialog id="taskDlg" autofocus>
+    <h2 id="tTitle"></h2>
+    <label class="field">Was ist zu tun?
+      <input id="tName" autocomplete="off" autocapitalize="sentences" enterkeyhint="done" placeholder="z. B. Pfandautomat leeren">
+    </label>
+    <p class="hint error" id="tNameHint" hidden>Bitte eintragen, was zu tun ist.</p>
+    <div class="field">Wann?
+      <div class="repeat-opts" id="tRepeat"></div>
+    </div>
+    <p class="hint">Arbeitstag = Tag mit Früh- oder Spätschicht, also ohne Wochenende, Berufsschule und Feiertage.</p>
+    <label class="field" id="tShiftField">Nur in bestimmten Wochen?
+      <select id="tShift">
+        <option value="any">Egal, jede Woche</option>
+        <option value="frueh">Nur in Frühschicht-Wochen</option>
+        <option value="spaet">Nur in Spätschicht-Wochen</option>
+      </select>
+    </label>
+    <div class="actions">
+      <button type="button" class="btn danger ghost" data-tact="delete">Löschen</button>
+      <button type="button" class="btn" data-tact="cancel">Abbrechen</button>
+      <button type="button" class="btn primary" data-tact="save">Speichern</button>
+    </div>
+  </dialog>
+
+  <!-- Monatsansicht -->
+  <dialog id="monthDlg" autofocus>
+    <div class="month-head">
+      <button type="button" data-mm="-1" aria-label="Monat zurück">‹</button>
+      <h2 id="monthTitle"></h2>
+      <button type="button" data-mm="1" aria-label="Monat vor">›</button>
+    </div>
+    <div class="month-grid" id="monthGrid"></div>
+    <div class="legend">
+      <span><i class="lg-frueh"></i>Frühschicht</span>
+      <span><i class="lg-spaet"></i>Spätschicht</span>
+      <span><i class="lg-school"></i>Berufsschule</span>
+      <span><i class="lg-holiday"></i>Feiertag</span>
+      <span><i class="lg-open"></i>offene Aufgaben</span>
+    </div>
+    <form method="dialog"><button class="btn big ghost">Schließen</button></form>
+  </dialog>
+
   <!-- Produkt oder Abschnitt anlegen / bearbeiten -->
-  <dialog id="productDlg">
+  <dialog id="productDlg" autofocus>
     <h2 id="pTitle"></h2>
     <div class="photo-edit" id="pPhotoRow">
       <span class="big-thumb" id="pPhoto"></span>
@@ -78,7 +143,7 @@
   </dialog>
 
   <!-- Sicherheitsabfrage -->
-  <dialog id="askDlg">
+  <dialog id="askDlg" autofocus>
     <form method="dialog">
       <h2 id="askTitle"></h2>
       <p id="askText"></p>
@@ -90,7 +155,7 @@
   </dialog>
 
   <!-- Sicherung -->
-  <dialog id="menuDlg">
+  <dialog id="menuDlg" autofocus>
     <form method="dialog">
       <h2>Sicherung</h2>
       <p>Alle Produkte, Fotos und Listen liegen nur auf diesem Handy. Speichere ab und zu eine Sicherung
@@ -112,5 +177,6 @@
   <input type="file" id="importInput" accept=".json,application/json" hidden>
 
   <script src="app.js"></script>
+  <script src="aufgaben.js"></script>
 </body>
 </html>

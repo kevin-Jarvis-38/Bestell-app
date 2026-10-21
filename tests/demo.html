@@ -17,22 +17,44 @@ const route = entries.map(([name, sup, n, soll], i) => name === '#'
 const done = { p1: 6, p12: 5, p3: 2 };
 localStorage.setItem('bestellapp', JSON.stringify({
   v: 3, route, orders: { lekkerland: { started: Date.now() - 3600e3, done }, tabacon: { started: null, done: {} } },
+  tasks: {
+    items: [
+      { id: 't1', title: 'Kasse zählen', repeat: 'weekly', weekday: 2, shift: 'any', created: '2026-10-01' },
+      { id: 't2', title: 'Kühlschrank auffüllen', repeat: 'workdays', shift: 'any', created: '2026-10-01' },
+      { id: 't3', title: 'Pfand wegbringen', repeat: 'once', date: '2026-10-26' },
+      { id: 't4', title: 'Azubiheft schreiben', repeat: 'once', date: '2026-10-27' },
+      { id: 't5', title: 'Zigarettenregal sortieren', repeat: 'weekly', weekday: 4, shift: 'spaet', created: '2026-10-01' },
+    ],
+    done: { '2026-10-27': ['t2'], '2026-10-26': [], '2026-10-23': ['t2'], '2026-10-22': ['t2'] },
+  },
   ui: { supplier: params.get('sup') || 'lekkerland', view: params.get('view') || 'count', scroll: {}, lastBackup: params.has('nobackup') ? null : Date.now() },
 }));
 </script>
 <style>body { margin: 0; } iframe { border: 0; width: 412px; height: 915px; display: block; }</style>
-<iframe src="../index.html"></iframe>
+<iframe></iframe>
 <script>
-// ?edit=p9 öffnet das Bearbeiten-Fenster dieses Produkts, ?edit=keins nur den Bearbeiten-Modus
-if (params.get('edit')) {
-  const timer = setInterval(() => {
-    const doc = document.querySelector('iframe').contentDocument;
-    const btn = doc && doc.querySelector('[data-act=toggle-edit]');
-    if (!btn) return;
-    clearInterval(timer);
-    btn.click();
-    const row = doc.querySelector(`[data-id="${params.get('edit')}"] [data-act=open]`);
-    if (row) row.click();
-  }, 100);
-}
+// ?heute=JJJJ-MM-TT legt "heute" fest. Ohne ?mode=tasks wird zur Bestellung gewechselt.
+// ?edit=p9 öffnet das Bearbeiten-Fenster dieses Produkts, ?edit=keins nur den Bearbeiten-Modus.
+// ?month öffnet die Monatsansicht, ?newtask das Fenster für eine neue Aufgabe.
+const iframe = document.querySelector('iframe');
+iframe.src = '../index.html' + (params.has('heute') ? '?heute=' + params.get('heute') : '');
+const timer = setInterval(() => {
+  const doc = iframe.contentDocument;
+  if (!doc || !doc.querySelector('.day-card, .empty')) return;
+  clearInterval(timer);
+  const click = sel => { const el = doc.querySelector(sel); if (el) el.click(); };
+  if (params.get('mode') !== 'tasks') click('[data-mode-tab=order]');
+  if (params.has('month')) click('#monthBtn');
+  if (params.has('newtask')) {
+    click('[data-act=task-add]');
+    doc.querySelector('#tName').value = 'Zigarettenregal sortieren';
+    doc.querySelector('#tRepeat input[value=weekly]').checked = true;
+    doc.querySelector('#tRepeat').dispatchEvent(new Event('change', { bubbles: true }));
+    doc.querySelector('#tShift').value = 'spaet';
+  }
+  if (params.get('edit')) {
+    click('[data-act=toggle-edit]');
+    click(`[data-id="${params.get('edit')}"] [data-act=open]`);
+  }
+}, 100);
 </script>

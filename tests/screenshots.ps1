@@ -5,6 +5,10 @@ $chromeExe = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
 $profile = Join-Path $env:TEMP 'bestellapp-chrome-shots'
 Remove-Item -Recurse -Force $profile -ErrorAction SilentlyContinue # sonst liefert der Offline-Speicher alte Dateien
 foreach ($shot in @(
+    @{ name = 'aufgaben'; query = 'mode=tasks&heute=2026-10-27'; dark = $false },
+    @{ name = 'aufgaben-dunkel'; query = 'mode=tasks&heute=2026-10-27'; dark = $true },
+    @{ name = 'aufgaben-monat'; query = 'mode=tasks&heute=2026-10-27&month'; dark = $false },
+    @{ name = 'aufgabe-neu'; query = 'mode=tasks&heute=2026-10-27&newtask'; dark = $false },
     @{ name = 'zaehlen'; query = 'view=count&nobackup'; dark = $false },
     @{ name = 'tabacon'; query = 'view=count&sup=tabacon'; dark = $false },
     @{ name = 'bestellliste'; query = 'view=order'; dark = $false },

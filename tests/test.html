@@ -17,8 +17,13 @@ const step = msg => { log.push('…    ' + msg); document.getElementById('log').
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const frame = document.getElementById('app');
 
-function load() {
-  return new Promise(res => { frame.onload = () => setTimeout(res, 400); frame.src = '../index.html?t=' + Date.now(); });
+// Die App startet bei den Aufgaben; für die Bestell-Prüfungen wird danach zur Bestellung gewechselt.
+async function load({ mode = 'order', heute = '' } = {}) {
+  await new Promise(res => {
+    frame.onload = () => setTimeout(res, 400);
+    frame.src = '../index.html?t=' + Date.now() + (heute ? '&heute=' + heute : '');
+  });
+  if (mode === 'order') click('[data-mode-tab=order]');
 }
 const w = () => frame.contentWindow;
 const d = () => frame.contentDocument;
@@ -237,6 +242,76 @@ async function reset() {
     await answer(true); await wait(600);
     check(names().includes('Brötchen') && q(`[data-id="${broe}"] img`), 'Gelöschtes Produkt samt Foto ist zurück');
     check((await w().readKeys('punkte')).length === 2, 'Stand vor dem Zurückholen wurde gesichert');
+
+    // ---------- Schichtplan und Bestelltage ----------
+    step('Aufgaben');
+    await load({ mode: 'tasks', heute: '2026-10-27' });
+    const W = w();
+    check(W.dayInfo('2026-10-20').label === 'Frühschicht' && W.dayInfo('2026-10-20').time === '05:30–16:00', 'Di 20.10.: Frühschicht 05:30–16:00');
+    check(W.dayInfo('2026-10-21').kind === 'school' && W.dayInfo('2026-10-27').label === 'Spätschicht', 'Mi 21.10. Berufsschule, Di 27.10. Spätschicht');
+    check(W.dayInfo('2026-11-04').kind === 'work' && W.dayInfo('2026-11-04').ferien === 'Herbstferien', 'Mi 04.11.: Arbeit in den Herbstferien');
+    check(W.dayInfo('2026-12-25').kind === 'holiday' && W.dayInfo('2026-10-24').kind === 'weekend', 'Feiertag und Wochenende');
+    check(W.lekkerlandDay('2026-10-21') === '2026-10-20', 'Lekkerland, Frühschicht-Woche mit Schul-Mittwoch: Dienstag');
+    check(W.lekkerlandDay('2026-10-28') === '2026-10-27', 'Lekkerland, Spätschicht-Woche: Dienstag');
+    check(W.lekkerlandDay('2026-11-02') === '2026-11-04', 'Lekkerland, Frühschicht-Woche in den Ferien: Mittwoch');
+    check(W.lekkerlandDay('2027-03-08') === '2027-03-10', 'Lekkerland, Frühschicht-Woche nach der Schulzeit: Mittwoch');
+    check(W.tabaconDay('2026-10-27') === '2026-10-30' && W.tabaconDay('2027-03-22') === '2027-03-25', 'Tabacon freitags, an Karfreitag donnerstags');
+
+    // ---------- Aufgaben-Ansicht ----------
+    check(q('body').dataset.mode === 'tasks' && q('.day-date').textContent.includes('27. Oktober') && q('.today-pill'), 'Start bei den Aufgaben von heute');
+    check(q('.day-kind').textContent.includes('Spätschicht') && q('#appTitle').textContent === 'Aufgaben', 'Tageskarte zeigt die Schicht');
+    check(q('[data-task="auto-lekkerland"]') && /Produkte in der Liste|noch leer/.test(q('[data-task="auto-lekkerland"] .tmeta').textContent),
+      'Lekkerland bestellen steht automatisch mit Stand der Liste');
+    check(d().querySelector('meta[name=theme-color]').content === '#0ca678', 'Statusleiste in Aufgaben-Grün');
+
+    click('[data-act=task-add]');
+    check(q('#taskDlg').open && q('#tRepeat input[value=once]').checked && q('#tShiftField').hidden, 'Neue Aufgabe: einmalig vorausgewählt');
+    q('#tName').value = 'Kasse zählen';
+    q('#tRepeat input[value=weekly]').checked = true;
+    q('#tRepeat').dispatchEvent(new (w().Event)('change', { bubbles: true }));
+    check(!q('#tShiftField').hidden && q('#tRepeat').textContent.includes('Jeden Dienstag'), 'Wöchentlich am Dienstag, Schichtwoche wählbar');
+    q('#tShift').value = 'spaet';
+    click('#taskDlg [data-tact=save]'); await wait(200);
+    const has = (k, title) => w().eval(`tasksFor('${k}')`).some(t => t.title === title);
+    check(has('2026-10-27', 'Kasse zählen') && !has('2026-11-03', 'Kasse zählen') && has('2026-11-10', 'Kasse zählen') && !has('2026-10-13', 'Kasse zählen'),
+      'Nur dienstags in Spätschicht-Wochen, erst ab heute');
+
+    click('[data-day="2026-10-26"]');
+    check(q('.day-date').textContent.includes('26. Oktober') && !q('#todayBtn').hidden, 'Anderen Tag in der Wochenleiste wählen');
+    click('[data-act=task-add]');
+    q('#tName').value = 'Pfand wegbringen';
+    click('#taskDlg [data-tact=save]'); await wait(200);
+    click('#todayBtn');
+    check(q('main').textContent.includes('Noch offen von früher') && q('main').textContent.includes('Pfand wegbringen'), 'Unerledigtes von gestern steht heute unter "Noch offen"');
+    check(q('#badgeTasks').textContent === '3', 'Abzeichen zählt die offenen Aufgaben von heute');
+    while (q('.trow:not(.done) [data-act=task-check]')) q('.trow:not(.done) [data-act=task-check]').click();
+    check(q('canvas.confetti') && !q('.alldone').hidden && q('#badgeTasks').textContent === '', 'Alles erledigt: Konfetti, Abzeichen leer');
+    check(q('[data-day="2026-10-27"] .dot').classList.contains('done'), 'Wochenleiste zeigt den Tag als erledigt');
+    await load({ mode: 'tasks', heute: '2026-10-27' });
+    check(qa('.trow.done').length === 2 && !q('main').textContent.includes('Pfand'), 'Haken bleiben nach Neustart');
+
+    click('[data-task="auto-lekkerland"] [data-act=task-go]');
+    check(q('body').dataset.mode === 'order' && stored().ui.supplier === 'lekkerland' && q('#appTitle').textContent === 'Bestellung',
+      'Bestellaufgabe öffnet die Lekkerland-Bestellung');
+    check(q('[data-mode-tab=order]').getAttribute('aria-current') === 'page' && q('[data-mode-tab=tasks]').getAttribute('aria-current') === 'false',
+      'Unten ist "Bestellung" hervorgehoben');
+    check(q('#today').textContent === 'Dienstag, 27. Oktober', 'Titelzeile zeigt das heutige Datum');
+    click('[data-mode-tab=tasks]');
+    check(q('body').dataset.mode === 'tasks' && q('.week-strip') && getComputedStyle(q('.sup-tabs')).display === 'none', 'Umschalter trennt Aufgaben und Bestellung');
+
+    click('#monthBtn');
+    check(q('#monthDlg').open && q('#monthTitle').textContent === 'Oktober 2026' && q('#monthGrid [data-day="2026-10-21"]').classList.contains('kind-school'),
+      'Monatsansicht mit Schichtfarben');
+    click('#monthGrid [data-day="2026-10-30"]');
+    check(!q('#monthDlg').open && q('[data-task="auto-tabacon"]'), 'Tag im Monat antippen springt hin (Freitag: Tabacon)');
+
+    click('[data-day="2026-10-27"]');
+    click('.trow:not(.auto-lekkerland) [data-act=task-open]');
+    check(q('#tTitle').textContent === 'Aufgabe bearbeiten' && q('#tName').value === 'Kasse zählen', 'Aufgabe zum Bearbeiten öffnen');
+    click('#taskDlg [data-tact=delete]');
+    check(q('#askText').textContent.includes('an allen Tagen'), 'Löschen warnt bei wiederkehrenden Aufgaben');
+    await answer(true);
+    check(!has('2026-11-10', 'Kasse zählen'), 'Wiederkehrende Aufgabe gelöscht');
   } catch (e) {
     check(false, 'Abbruch: ' + e.stack);
   }
