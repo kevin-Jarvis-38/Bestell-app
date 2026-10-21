@@ -24,14 +24,15 @@
       <button role="tab" data-view-tab="count">Durchgehen <span class="badge" id="badgeCount"></span></button>
       <button role="tab" data-view-tab="order">Bestellliste <span class="badge" id="badgeOrder"></span></button>
     </div>
+    <div class="sec-chips" id="secChips" hidden></div>
   </header>
 
   <main id="main"></main>
 
-  <!-- Produkt anlegen / bearbeiten -->
+  <!-- Produkt oder Abschnitt anlegen / bearbeiten -->
   <dialog id="productDlg">
     <h2 id="pTitle"></h2>
-    <div class="photo-edit">
+    <div class="photo-edit" id="pPhotoRow">
       <span class="big-thumb" id="pPhoto"></span>
       <div class="photo-btns">
         <button type="button" class="btn" data-pact="cam">📷 Foto aufnehmen</button>
@@ -43,6 +44,19 @@
       <input id="pName" autocomplete="off" autocapitalize="sentences" enterkeyhint="done">
     </label>
     <p class="hint error" id="pNameHint" hidden>Bitte einen Namen eingeben.</p>
+    <div id="pProductFields">
+      <div class="field">Bestellen bei
+        <div class="sup-checks" id="pSup"></div>
+      </div>
+      <p class="hint error" id="pSupHint" hidden>Bitte mindestens einen Lieferanten auswählen.</p>
+      <label class="field">Soll-Bestand
+        <input id="pSoll" type="number" inputmode="numeric" min="0" placeholder="z. B. 6">
+      </label>
+      <p class="hint">So viele sollen immer da sein. Leer lassen, wenn es keine feste Menge gibt.</p>
+      <label class="field" id="pSecField">Abschnitt
+        <select id="pSec"></select>
+      </label>
+    </div>
     <label class="field">Position im Laufweg
       <input id="pPos" type="number" inputmode="numeric" min="1">
     </label>
@@ -68,7 +82,7 @@
     </form>
   </dialog>
 
-  <!-- Menü: Sicherung -->
+  <!-- Sicherung -->
   <dialog id="menuDlg">
     <form method="dialog">
       <h2>Sicherung</h2>

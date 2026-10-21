@@ -5,9 +5,10 @@ const SUPPLIERS = [
   { key: 'lekkerland', name: 'Lekkerland' },
   { key: 'tabacon', name: 'Tabacon' },
 ];
-const VERSION = '1.0';
+const VERSION = '2.0';
 const STORAGE_KEY = 'bestellapp';
 const PHOTO_MAX = 480; // längste Bildkante in Pixeln, hält die Fotos klein
+const BACKUP_DAYS = 14; // so alt darf die letzte Sicherung sein, bevor die App daran erinnert
 
 const $ = sel => document.querySelector(sel);
 const main = $('#main');
@@ -15,27 +16,68 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 const byName = (a, b) => a.name.localeCompare(b.name, 'de', { sensitivity: 'base', numeric: true });
 const buzz = () => navigator.vibrate && navigator.vibrate(12);
+const isProduct = e => e.kind === 'product';
+const isSection = e => e.kind === 'section';
+const TRASH = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>`;
 
-// ---------- Zustand: Produkte, Zähler, Bestelllisten (localStorage) ----------
+// ---------- Zustand (localStorage) ----------
+// route:  der Laufweg durch den Laden, gemeinsam für alle Lieferanten. Er enthält Abschnitte
+//         { id, kind: 'section', name } und Produkte
+//         { id, kind: 'product', name, photo, soll, sup: { lekkerland: true, … }, count: { lekkerland: 0, … } }.
+// orders: die bestätigte Bestellliste je Lieferant.
 
 function emptyState() {
-  const s = { suppliers: {}, ui: { supplier: SUPPLIERS[0].key, view: 'count', scroll: {}, lastBackup: null } };
-  for (const sup of SUPPLIERS) s.suppliers[sup.key] = { products: [], order: null };
+  const s = { v: 2, route: [], orders: {}, ui: { supplier: SUPPLIERS[0].key, view: 'count', scroll: {}, lastBackup: null, newSup: null } };
+  for (const sup of SUPPLIERS) s.orders[sup.key] = null;
   return s;
 }
 
-function normalize(s) {
-  const base = emptyState();
-  s = s && typeof s === 'object' ? s : {};
-  const out = { suppliers: {}, ui: Object.assign(base.ui, s.ui) };
-  for (const sup of SUPPLIERS) {
-    const src = (s.suppliers && s.suppliers[sup.key]) || {};
-    out.suppliers[sup.key] = {
-      products: Array.isArray(src.products) ? src.products : [],
-      order: src.order && Array.isArray(src.order.items) ? src.order : null,
-    };
+function fixEntry(e) {
+  if (e.kind === 'section') return { id: e.id, kind: 'section', name: String(e.name || '') };
+  const p = { id: e.id, kind: 'product', name: String(e.name || ''), photo: !!e.photo, soll: null, sup: {}, count: {} };
+  if (Number.isInteger(e.soll) && e.soll >= 0) p.soll = e.soll;
+  for (const s of SUPPLIERS) {
+    p.sup[s.key] = !!(e.sup && e.sup[s.key]);
+    p.count[s.key] = Math.max(0, parseInt(e.count && e.count[s.key], 10) || 0);
   }
-  if (!out.suppliers[out.ui.supplier]) out.ui.supplier = SUPPLIERS[0].key;
+  return p;
+}
+
+// Version 1 hatte zwei getrennte Listen. Gleichnamige Produkte werden zu einem zusammengelegt.
+function migrateV1(suppliers) {
+  const route = [];
+  const seen = new Map();
+  for (const sup of SUPPLIERS) {
+    for (const old of (suppliers[sup.key] && suppliers[sup.key].products) || []) {
+      const key = String(old.name).trim().toLowerCase();
+      let p = seen.get(key);
+      if (!p) {
+        p = fixEntry({ id: old.id, kind: 'product', name: old.name, photo: old.photo });
+        route.push(p);
+        seen.set(key, p);
+      } else if (!p.photo && old.photo) {
+        p.id = old.id; // Foto des anderen Eintrags übernehmen
+        p.photo = true;
+      }
+      p.sup[sup.key] = true;
+      p.count[sup.key] = Math.max(0, parseInt(old.count, 10) || 0);
+    }
+  }
+  return route;
+}
+
+function normalize(s) {
+  s = s && typeof s === 'object' ? s : {};
+  const base = emptyState();
+  const out = { v: 2, route: [], orders: {}, ui: Object.assign(base.ui, s.ui) };
+  if (Array.isArray(s.route)) out.route = s.route.filter(e => e && e.id).map(fixEntry);
+  else if (s.suppliers) out.route = migrateV1(s.suppliers);
+  for (const sup of SUPPLIERS) {
+    const o = s.orders ? s.orders[sup.key] : s.suppliers && s.suppliers[sup.key] && s.suppliers[sup.key].order;
+    out.orders[sup.key] = o && Array.isArray(o.items) ? o : null;
+  }
+  if (!SUPPLIERS.some(x => x.key === out.ui.supplier)) out.ui.supplier = SUPPLIERS[0].key;
   if (out.ui.view !== 'order') out.ui.view = 'count';
   if (!out.ui.scroll || typeof out.ui.scroll !== 'object') out.ui.scroll = {};
   return out;
@@ -44,7 +86,14 @@ function normalize(s) {
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return normalize(JSON.parse(raw));
+    if (raw) {
+      const s = JSON.parse(raw);
+      // Alten Stand aufheben, bevor er in den gemeinsamen Laufweg umgebaut wird
+      if (s && !Array.isArray(s.route) && s.suppliers && !localStorage.getItem(STORAGE_KEY + '-v1')) {
+        localStorage.setItem(STORAGE_KEY + '-v1', raw);
+      }
+      return normalize(s);
+    }
   } catch (e) {
     console.error(e);
   }
@@ -61,8 +110,23 @@ function save() {
 
 let state = loadState();
 let editing = false;
-const cur = () => state.suppliers[state.ui.supplier];
+let search = '';
 const supName = () => SUPPLIERS.find(s => s.key === state.ui.supplier).name;
+
+// Was der aktuelle Lieferant beim Durchgehen sieht: seine Produkte und die Abschnitte, in denen welche stehen
+function visibleRoute(k) {
+  const out = [];
+  let pendingSection = null;
+  for (const e of state.route) {
+    if (isSection(e)) pendingSection = e;
+    else if (e.sup[k]) {
+      if (pendingSection) out.push(pendingSection);
+      pendingSection = null;
+      out.push(e);
+    }
+  }
+  return out;
+}
 
 // ---------- Fotos (IndexedDB, Schlüssel = Produkt-ID) ----------
 
@@ -138,22 +202,63 @@ function thumb(p) {
   return `<span class="thumb">${url ? `<img src="${url}" alt="">` : letter}</span>`;
 }
 
-// ---------- Scrollposition je Lieferant und Ansicht merken ----------
+// ---------- Kopfzeile, Scrollposition, Abschnitts-Knöpfe ----------
+
+const header = $('.top');
+let headerHeight = 0;
+new ResizeObserver(() => {
+  headerHeight = header.offsetHeight;
+  document.documentElement.style.setProperty('--head', headerHeight + 'px');
+}).observe(header);
 
 const scrollKey = () => state.ui.supplier + ':' + state.ui.view;
 let scrollTimer;
+let chipFrame = 0;
 addEventListener('scroll', () => {
   clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => {
     state.ui.scroll[scrollKey()] = Math.round(scrollY);
     save();
   }, 250);
+  if (!chipFrame) chipFrame = requestAnimationFrame(() => { chipFrame = 0; markChip(); });
 }, { passive: true });
 
 function rememberScroll() {
   clearTimeout(scrollTimer);
   state.ui.scroll[scrollKey()] = Math.round(scrollY);
 }
+
+function renderChips() {
+  const chips = $('#secChips');
+  const route = editing ? state.route : visibleRoute(state.ui.supplier);
+  const sections = state.ui.view === 'count' && !search ? route.filter(isSection) : [];
+  chips.hidden = !sections.length;
+  chips.innerHTML = sections.map(s => `<button data-sec="${s.id}">${esc(s.name)}</button>`).join('');
+  markChip();
+}
+
+// Hebt den Abschnitt hervor, in dem man gerade ist
+function markChip() {
+  const chips = $('#secChips');
+  if (chips.hidden) return;
+  let active = null;
+  for (const el of main.querySelectorAll('[id^="sec-"]')) {
+    if (el.getBoundingClientRect().top <= headerHeight + 30) active = el.id.slice(4);
+    else break;
+  }
+  for (const b of chips.children) {
+    const on = b.dataset.sec === active;
+    if (on === b.classList.contains('on')) continue;
+    b.classList.toggle('on', on);
+    if (on) chips.scrollLeft = b.offsetLeft - (chips.clientWidth - b.offsetWidth) / 2;
+  }
+}
+
+$('#secChips').addEventListener('click', e => {
+  const b = e.target.closest('[data-sec]');
+  const target = b && document.getElementById('sec-' + b.dataset.sec);
+  if (target) target.scrollIntoView({ block: 'start' });
+});
 
 // ---------- Anzeige ----------
 
@@ -164,79 +269,125 @@ function render() {
   if (state.ui.view === 'order') renderOrder();
   else renderCount();
   scrollTo(0, state.ui.scroll[scrollKey()] || 0);
+  markChip();
 }
 
 function updateBadges() {
-  const sup = cur();
-  const counted = sup.products.filter(p => p.count > 0).length;
-  const open = sup.order ? sup.order.items.filter(i => !i.done).length : 0;
+  const k = state.ui.supplier;
+  const counted = state.route.filter(e => isProduct(e) && e.sup[k] && e.count[k] > 0).length;
+  const o = state.orders[k];
+  const open = o ? o.items.filter(i => !i.done).length : 0;
   $('#badgeCount').textContent = counted || '';
   $('#badgeOrder').textContent = open || '';
 }
 
 function countSummary() {
-  const sup = cur();
-  const counted = sup.products.filter(p => p.count > 0).length;
-  return `${sup.products.length} Produkte · <b>${counted}</b> ausgewählt`;
+  const k = state.ui.supplier;
+  const products = state.route.filter(e => isProduct(e) && e.sup[k]);
+  return `${products.length} Produkte · <b>${products.filter(p => p.count[k] > 0).length}</b> ausgewählt`;
+}
+
+function backupNotice() {
+  if (!state.route.some(isProduct)) return '';
+  const last = state.ui.lastBackup;
+  const days = last ? Math.floor((Date.now() - last) / 864e5) : null;
+  if (days !== null && days < BACKUP_DAYS) return '';
+  return `<div class="notice"><span>${days === null ? 'Noch keine Sicherung gespeichert.' : `Letzte Sicherung vor ${days} Tagen.`}</span>
+    <button class="btn small" data-act="backup">Jetzt sichern</button></div>`;
 }
 
 function renderCount() {
-  const sup = cur();
+  const k = state.ui.supplier;
   updateBadges();
-  if (!sup.products.length) {
+  if (!state.route.length) {
     main.innerHTML = `<div class="empty">
-      <p>Für <b>${esc(supName())}</b> sind noch keine Produkte angelegt.</p>
-      <p>Leg sie in der Reihenfolge an, in der du durch den Laden läufst. Dann musst du später nur noch von oben nach unten durchgehen.</p>
-      <button class="btn primary big" data-act="add">+ Erstes Produkt anlegen</button></div>`;
+      <p>Es sind noch keine Produkte angelegt.</p>
+      <p>Leg sie in der Reihenfolge an, in der du durch den Laden läufst. Bei jedem Produkt wählst du, bei welchem Lieferanten es bestellt wird.</p>
+      <button class="btn primary big" data-act="add">+ Erstes Produkt anlegen</button>
+      <button class="btn big" data-act="add-section">+ Mit einem Abschnitt beginnen</button></div>`;
+    renderChips();
     return;
   }
-  const n = sup.products.length;
-  main.innerHTML = `
+  if (!editing && !state.route.some(e => isProduct(e) && e.sup[k])) {
+    main.innerHTML = `<div class="empty">
+      <p>Bei <b>${esc(supName())}</b> ist noch kein Produkt dabei.</p>
+      <p>Tippe auf „Bearbeiten“, öffne ein Produkt und setze den Haken bei ${esc(supName())}.</p>
+      <button class="btn primary big" data-act="toggle-edit">✎ Bearbeiten</button></div>`;
+    renderChips();
+    return;
+  }
+  main.innerHTML = `${backupNotice()}
     <div class="bar">
-      <div class="bar-text" id="countText">${editing ? 'Tippe ein Produkt an, um es zu ändern.' : countSummary()}</div>
+      <div class="bar-text" id="countText">${editing ? 'Laufweg für alle Lieferanten. Tippe einen Eintrag an, um ihn zu ändern.' : countSummary()}</div>
       <button class="btn small${editing ? ' primary' : ''}" data-act="toggle-edit">${editing ? 'Fertig' : '✎ Bearbeiten'}</button>
     </div>
-    <ul class="list">${sup.products.map((p, i) => editing ? editRow(p, i, n) : countRow(p)).join('')}</ul>
+    <div class="search">
+      <input id="search" placeholder="Produkt suchen" value="${esc(search)}" autocomplete="off" enterkeyhint="search">
+      <button class="clear" data-act="clear-search" aria-label="Suche leeren"${search ? '' : ' hidden'}>×</button>
+    </div>
+    <ul class="list" id="list"></ul>
     ${editing
-      ? '<button class="btn big" data-act="add">+ Produkt hinzufügen</button>'
+      ? '<div class="add-btns"><button class="btn big" data-act="add">+ Produkt</button><button class="btn big" data-act="add-section">+ Abschnitt</button></div>'
       : '<button class="btn primary big confirm" data-act="confirm">Liste bestätigen</button>'}`;
+  renderList();
 }
 
-const countRow = p => `
-  <li class="row${p.count ? ' on' : ''}" data-id="${p.id}">
-    ${thumb(p)}<span class="name">${esc(p.name)}</span>
+function renderList() {
+  const k = state.ui.supplier;
+  const route = editing ? state.route : visibleRoute(k);
+  const q = search.trim().toLowerCase();
+  const items = q ? route.filter(e => isProduct(e) && e.name.toLowerCase().includes(q)) : route;
+  const pos = new Map(state.route.map((e, i) => [e, i]));
+  $('#list').innerHTML = items.length
+    ? items.map(e => editing ? editRow(e, pos.get(e), state.route.length) : isSection(e) ? sectionHeading(e) : countRow(e, k)).join('')
+    : '<li class="none">Nichts gefunden.</li>';
+  main.querySelector('[data-act=clear-search]').hidden = !search;
+  renderChips();
+}
+
+const sectionHeading = s => `<li class="sec" id="sec-${s.id}">${esc(s.name)}</li>`;
+
+const countRow = (p, k) => `
+  <li class="row${p.count[k] ? ' on' : ''}" data-id="${p.id}">
+    ${thumb(p)}<span class="name">${esc(p.name)}${p.soll !== null ? `<small class="soll">Soll ${p.soll}</small>` : ''}</span>
     <span class="stepper">
-      <button class="step" data-act="minus" aria-label="1 weniger"${p.count ? '' : ' disabled'}>−1</button>
-      <output class="count">${p.count}</output>
+      <button class="step" data-act="minus" aria-label="1 weniger"${p.count[k] ? '' : ' disabled'}>−1</button>
+      <output class="count">${p.count[k]}</output>
       <button class="step plus" data-act="plus" aria-label="1 mehr">+1</button>
     </span>
   </li>`;
 
-const editRow = (p, i, n) => `
-  <li class="row edit" data-id="${p.id}">
-    <span class="pos">${i + 1}</span>
-    <button class="rowbtn" data-act="open">${thumb(p)}<span class="name">${esc(p.name)}</span></button>
+function editRow(e, i, n) {
+  const tools = `
     <button class="step" data-act="up" aria-label="nach oben"${i ? '' : ' disabled'}>▲</button>
     <button class="step" data-act="down" aria-label="nach unten"${i < n - 1 ? '' : ' disabled'}>▼</button>
-    <button class="step del" data-act="delete" aria-label="löschen">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>
-      </svg>
-    </button>
-  </li>`;
+    <button class="step del" data-act="delete" aria-label="löschen">${TRASH}</button>`;
+  if (isSection(e)) {
+    return `<li class="row edit section" id="sec-${e.id}" data-id="${e.id}">
+      <span class="pos">${i + 1}</span><button class="rowbtn" data-act="open"><span class="name">${esc(e.name)}</span></button>${tools}</li>`;
+  }
+  const tags = SUPPLIERS.filter(s => e.sup[s.key]).map(s => `<span class="tag tag-${s.key}">${esc(s.name)}</span>`).join('');
+  const soll = e.soll !== null ? `<span>Soll ${e.soll}</span>` : '';
+  return `<li class="row edit" data-id="${e.id}">
+    <span class="pos">${i + 1}</span>
+    <button class="rowbtn" data-act="open">${thumb(e)}<span class="name">${esc(e.name)}<small class="meta">${soll}${tags}</small></span></button>${tools}</li>`;
+}
 
 function renderOrder() {
-  const o = cur().order;
+  const o = state.orders[state.ui.supplier];
   updateBadges();
+  renderChips();
   if (!o) {
     main.innerHTML = `<div class="empty">
       <p>Noch keine Bestellliste für <b>${esc(supName())}</b>.</p>
       <p>Geh unter „Durchgehen“ die Produkte durch und tippe ganz unten auf „Liste bestätigen“.</p></div>`;
     return;
   }
-  const created = new Date(o.created).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   main.innerHTML = `
-    <div class="bar"><div class="bar-text">Erstellt ${created}<br><span id="doneText"></span></div></div>
+    <div class="bar">
+      <div class="bar-text">Erstellt ${orderDate(o)}<br><span id="doneText"></span></div>
+      <button class="btn small" data-act="share">Teilen</button>
+    </div>
     <div class="progress"><span id="doneBar"></span></div>
     <ul class="list">${o.items.map((it, i) => `
       <li><button class="orow${it.done ? ' done' : ''}" role="checkbox" aria-checked="${it.done}" data-act="check" data-i="${i}">
@@ -247,8 +398,10 @@ function renderOrder() {
   updateOrderProgress();
 }
 
+const orderDate = o => new Date(o.created).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
 function updateOrderProgress() {
-  const items = cur().order.items;
+  const items = state.orders[state.ui.supplier].items;
   const done = items.filter(i => i.done).length;
   $('#doneText').innerHTML = `<b>${done}</b> von ${items.length} eingegeben`;
   $('#doneBar').style.width = (items.length ? 100 * done / items.length : 0) + '%';
@@ -259,54 +412,56 @@ function updateOrderProgress() {
 // ---------- Aktionen ----------
 
 function changeCount(id, delta, li) {
-  const p = cur().products.find(x => x.id === id);
+  const k = state.ui.supplier;
+  const p = state.route.find(x => x.id === id);
   if (!p) return;
-  p.count = Math.max(0, p.count + delta);
+  p.count[k] = Math.max(0, p.count[k] + delta);
   save();
   buzz();
-  li.classList.toggle('on', p.count > 0);
-  li.querySelector('.count').textContent = p.count;
-  li.querySelector('[data-act=minus]').disabled = !p.count;
+  li.classList.toggle('on', p.count[k] > 0);
+  li.querySelector('.count').textContent = p.count[k];
+  li.querySelector('[data-act=minus]').disabled = !p.count[k];
   $('#countText').innerHTML = countSummary();
   updateBadges();
 }
 
 function move(id, delta) {
-  const list = cur().products;
-  const i = list.findIndex(p => p.id === id);
+  const route = state.route;
+  const i = route.findIndex(e => e.id === id);
   const j = i + delta;
-  if (i < 0 || j < 0 || j >= list.length) return;
-  [list[i], list[j]] = [list[j], list[i]];
+  if (i < 0 || j < 0 || j >= route.length) return;
+  [route[i], route[j]] = [route[j], route[i]];
   save();
   renderCount();
   main.querySelector(`[data-id="${id}"]`).classList.add('moved');
 }
 
 async function confirmOrder() {
-  const sup = cur();
-  const items = sup.products.filter(p => p.count > 0);
+  const k = state.ui.supplier;
+  const items = state.route.filter(e => isProduct(e) && e.sup[k] && e.count[k] > 0);
   if (!items.length) {
     await ask({ title: 'Noch nichts ausgewählt', text: 'Tippe bei den Produkten, die bestellt werden sollen, auf +1.', yes: 'OK', no: null });
     return;
   }
-  const pieces = items.reduce((n, p) => n + p.count, 0);
-  let text = `${items.length} Produkte (${pieces} Stück) kommen in die Bestellliste für ${supName()}. Danach stehen alle Zähler wieder auf 0.`;
-  if (sup.order) text += ' Die bisherige Bestellliste wird dabei ersetzt.';
+  const pieces = items.reduce((n, p) => n + p.count[k], 0);
+  let text = `${items.length} Produkte (${pieces} Stück) kommen in die Bestellliste für ${supName()}. Danach stehen die Zähler für ${supName()} wieder auf 0.`;
+  if (state.orders[k]) text += ' Die bisherige Bestellliste wird dabei ersetzt.';
   if (!await ask({ title: 'Bist du sicher?', text })) return;
-  sup.order = {
+  state.orders[k] = {
     created: Date.now(),
-    items: items.map(p => ({ id: p.id, name: p.name, count: p.count, done: false })).sort(byName),
+    items: items.map(p => ({ id: p.id, name: p.name, count: p.count[k], done: false })).sort(byName),
   };
-  for (const p of sup.products) p.count = 0;
-  state.ui.scroll[state.ui.supplier + ':count'] = 0;
-  state.ui.scroll[state.ui.supplier + ':order'] = 0;
+  for (const e of state.route) if (isProduct(e)) e.count[k] = 0;
+  state.ui.scroll[k + ':count'] = 0;
+  state.ui.scroll[k + ':order'] = 0;
   state.ui.view = 'order';
+  search = '';
   save();
   render();
 }
 
 function toggleDone(i, btn) {
-  const it = cur().order.items[i];
+  const it = state.orders[state.ui.supplier].items[i];
   it.done = !it.done;
   save();
   buzz();
@@ -317,9 +472,29 @@ function toggleDone(i, btn) {
 
 async function clearOrder() {
   if (!await ask({ title: 'Bestellliste löschen?', text: `Die Bestellliste für ${supName()} wird gelöscht.`, yes: 'Löschen', no: 'Abbrechen', danger: true })) return;
-  cur().order = null;
+  state.orders[state.ui.supplier] = null;
   save();
   render();
+}
+
+async function shareOrder() {
+  const o = state.orders[state.ui.supplier];
+  const title = `Bestellung ${supName()}`;
+  const text = `${title} (${orderDate(o)})\n` + o.items.map(i => `${i.count}× ${i.name}`).join('\n');
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return; // Teilen-Fenster wurde geschlossen
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    await ask({ title: 'Kopiert', text: 'Die Liste ist in der Zwischenablage. Du kannst sie jetzt z. B. in WhatsApp einfügen.', yes: 'OK', no: null });
+  } catch {
+    alert(text);
+  }
 }
 
 main.addEventListener('click', e => {
@@ -331,15 +506,28 @@ main.addEventListener('click', e => {
     case 'plus': return changeCount(id, 1, li);
     case 'minus': return changeCount(id, -1, li);
     case 'toggle-edit': editing = !editing; return renderCount();
-    case 'add': editing = true; return openProduct(null);
-    case 'open': return openProduct(id);
+    case 'add': editing = true; return openEntry(null, undefined, 'product');
+    case 'add-section': editing = true; return openEntry(null, undefined, 'section');
+    case 'open': return openEntry(id);
     case 'up': return move(id, -1);
     case 'down': return move(id, 1);
-    case 'delete': return deleteProduct(id);
+    case 'delete': return deleteEntry(id);
     case 'confirm': return confirmOrder();
     case 'check': return toggleDone(+btn.dataset.i, btn);
     case 'clear-order': return clearOrder();
+    case 'share': return shareOrder();
+    case 'backup': return openMenu();
+    case 'clear-search':
+      search = '';
+      $('#search').value = '';
+      return renderList();
   }
+});
+
+main.addEventListener('input', e => {
+  if (e.target.id !== 'search') return;
+  search = e.target.value;
+  renderList();
 });
 
 $('.sup-tabs').innerHTML = SUPPLIERS.map(s => `<button role="tab" data-sup-tab="${s.key}">${esc(s.name)}</button>`).join('');
@@ -349,6 +537,7 @@ $('.sup-tabs').addEventListener('click', e => {
   rememberScroll();
   state.ui.supplier = b.dataset.supTab;
   editing = false;
+  search = '';
   save();
   render();
 });
@@ -358,6 +547,7 @@ $('.view-tabs').addEventListener('click', e => {
   rememberScroll();
   state.ui.view = b.dataset.viewTab;
   editing = false;
+  search = '';
   save();
   render();
 });
@@ -379,29 +569,85 @@ function ask({ title, text, yes = 'Ja', no = 'Nein', danger = false }) {
   });
 }
 
-// ---------- Produkt anlegen / bearbeiten ----------
+// ---------- Produkt oder Abschnitt anlegen / bearbeiten ----------
 
 const productDlg = $('#productDlg');
-let pd = null; // { id, photo, insertAt }; photo: undefined = unverändert, Blob = neu, null = entfernen
+let pd = null; // { id, kind, photo }; photo: undefined = unverändert, Blob = neu, null = entfernen
 
-function openProduct(id, insertAt) {
-  const list = cur().products;
-  const index = id ? list.findIndex(x => x.id === id) : -1;
-  const p = index >= 0 ? list[index] : null;
-  pd = { id: p ? p.id : null, photo: undefined };
-  const max = p ? list.length : list.length + 1;
-  $('#pTitle').textContent = p ? 'Produkt bearbeiten' : `Neues Produkt (${supName()})`;
-  $('#pName').value = p ? p.name : '';
-  $('#pPos').max = max;
-  $('#pPos').value = p ? index + 1 : Math.min(insertAt ?? list.length, list.length) + 1;
-  $('#pPosHint').textContent = `1 = ganz vorne, ${max} = ganz hinten`;
+// Position und Abschnitt im Fenster beziehen sich auf den Laufweg ohne den bearbeiteten Eintrag
+const routeWithout = id => state.route.filter(e => e.id !== id);
+
+function sectionBefore(route, index) {
+  for (let i = Math.min(index, route.length) - 1; i >= 0; i--) if (isSection(route[i])) return route[i];
+  return null;
+}
+
+function endOfSection(route, sectionId) {
+  let i = route.findIndex(e => e.id === sectionId);
+  if (i < 0) return route.length;
+  for (i++; i < route.length && !isSection(route[i]); i++);
+  return i;
+}
+
+function fillSectionSelect(route, index) {
+  const current = sectionBefore(route, index);
+  $('#pSec').innerHTML = (current ? '' : '<option value="">– vor dem ersten Abschnitt –</option>')
+    + route.filter(isSection).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  $('#pSec').value = current ? current.id : '';
+}
+
+function openEntry(id, insertAt, kind = 'product') {
+  const index = id ? state.route.findIndex(e => e.id === id) : -1;
+  const e = index >= 0 ? state.route[index] : null;
+  if (e) kind = e.kind;
+  const isProd = kind === 'product';
+  const rest = routeWithout(e && e.id);
+  const at = e ? index : Math.min(insertAt ?? rest.length, rest.length);
+  pd = { id: e ? e.id : null, kind, photo: undefined };
+
+  $('#pTitle').textContent = isProd ? (e ? 'Produkt bearbeiten' : 'Neues Produkt') : (e ? 'Abschnitt bearbeiten' : 'Neuer Abschnitt');
+  $('#pName').value = e ? e.name : '';
+  $('#pName').placeholder = isProd ? 'z. B. Marlboro Rot 10 €' : 'z. B. Backwaren';
+  $('#pPos').max = rest.length + 1;
+  $('#pPos').value = at + 1;
+  $('#pPosHint').textContent = isProd
+    ? `1 = ganz vorne, ${rest.length + 1} = ganz hinten`
+    : `1 = ganz vorne, ${rest.length + 1} = ganz hinten. Alles darunter gehört zu diesem Abschnitt.`;
   $('#pNameHint').hidden = true;
-  productDlg.querySelector('[data-pact=delete]').hidden = !p;
-  productDlg.querySelector('[data-pact=save-next]').hidden = !!p;
-  showPhotoPreview();
+  $('#pSupHint').hidden = true;
+  $('#pPhotoRow').hidden = !isProd;
+  $('#pProductFields').hidden = !isProd;
+  if (isProd) {
+    $('#pSoll').value = e && e.soll !== null ? e.soll : '';
+    const sup = e ? e.sup : (state.ui.newSup || { [state.ui.supplier]: true });
+    for (const cb of productDlg.querySelectorAll('[name=sup]')) cb.checked = !!sup[cb.value];
+    $('#pSecField').hidden = !rest.some(isSection);
+    fillSectionSelect(rest, at);
+    showPhotoPreview();
+  }
+  productDlg.querySelector('[data-pact=delete]').hidden = !e;
+  productDlg.querySelector('[data-pact=save-next]').hidden = !(isProd && !e);
   if (!productDlg.open) productDlg.showModal();
   productDlg.scrollTop = 0;
 }
+
+$('#pSup').innerHTML = SUPPLIERS.map(s => `<label class="chk"><input type="checkbox" name="sup" value="${s.key}">${esc(s.name)}</label>`).join('');
+
+// Abschnitt gewählt: Produkt ans Ende dieses Abschnitts setzen
+$('#pSec').addEventListener('change', () => {
+  if (!pd || !$('#pSec').value) return;
+  const rest = routeWithout(pd.id);
+  const index = endOfSection(rest, $('#pSec').value);
+  $('#pPos').value = index + 1;
+  fillSectionSelect(rest, index);
+});
+
+// Position geändert: passenden Abschnitt anzeigen
+$('#pPos').addEventListener('input', () => {
+  if (!pd || pd.kind !== 'product') return;
+  const pos = parseInt($('#pPos').value, 10);
+  if (pos >= 1) fillSectionSelect(routeWithout(pd.id), pos - 1);
+});
 
 let previewUrl = null;
 function showPhotoPreview() {
@@ -410,7 +656,7 @@ function showPhotoPreview() {
   let url = null;
   if (pd.photo instanceof Blob) url = previewUrl = URL.createObjectURL(pd.photo);
   else if (pd.photo === undefined && pd.id) {
-    const p = cur().products.find(x => x.id === pd.id);
+    const p = state.route.find(x => x.id === pd.id);
     if (p && p.photo) url = photoUrls.get(p.id);
   }
   $('#pPhoto').innerHTML = url ? `<img src="${url}" alt="">` : '<span>Kein Foto</span>';
@@ -431,60 +677,90 @@ async function onPhotoPicked(e) {
 $('#camInput').addEventListener('change', onPhotoPicked);
 $('#galInput').addEventListener('change', onPhotoPicked);
 
-async function saveProduct(next) {
+async function saveEntry(next) {
+  const isProd = pd.kind === 'product';
   const name = $('#pName').value.trim().replace(/\s+/g, ' ');
   if (!name) {
     $('#pNameHint').hidden = false;
     $('#pName').focus();
     return;
   }
-  const list = cur().products;
-  let p, from = -1;
+  let sup = null;
+  if (isProd) {
+    sup = {};
+    for (const cb of productDlg.querySelectorAll('[name=sup]')) sup[cb.value] = cb.checked;
+    if (!Object.values(sup).some(Boolean)) {
+      $('#pSupHint').hidden = false;
+      return;
+    }
+  }
+  const route = state.route;
+  let e, from = -1;
   if (pd.id) {
-    from = list.findIndex(x => x.id === pd.id);
-    p = list.splice(from, 1)[0];
-    p.name = name;
+    from = route.findIndex(x => x.id === pd.id);
+    e = route.splice(from, 1)[0];
+    e.name = name;
   } else {
-    p = { id: newId(), name, count: 0, photo: false };
+    e = isProd ? fixEntry({ id: newId(), kind: 'product', name }) : { id: newId(), kind: 'section', name };
+  }
+  if (isProd) {
+    for (const s of SUPPLIERS) {
+      e.sup[s.key] = sup[s.key];
+      if (!sup[s.key]) e.count[s.key] = 0;
+    }
+    const soll = parseInt($('#pSoll').value, 10);
+    e.soll = soll >= 0 ? soll : null;
+    if (!pd.id) state.ui.newSup = sup; // beim nächsten neuen Produkt dieselben Haken vorschlagen
   }
   let pos = parseInt($('#pPos').value, 10);
-  if (!(pos >= 1)) pos = from >= 0 ? from + 1 : list.length + 1;
-  const idx = Math.min(pos - 1, list.length);
-  list.splice(idx, 0, p);
-  try {
-    if (pd.photo instanceof Blob) {
-      await putPhoto(p.id, pd.photo);
-      setPhotoUrl(p.id, pd.photo);
-      p.photo = true;
-    } else if (pd.photo === null && p.photo) {
-      await deletePhoto(p.id);
-      setPhotoUrl(p.id, null);
-      p.photo = false;
+  if (!(pos >= 1)) pos = from >= 0 ? from + 1 : route.length + 1;
+  const idx = Math.min(pos - 1, route.length);
+  route.splice(idx, 0, e);
+  if (isProd) {
+    try {
+      if (pd.photo instanceof Blob) {
+        await putPhoto(e.id, pd.photo);
+        setPhotoUrl(e.id, pd.photo);
+        e.photo = true;
+      } else if (pd.photo === null && e.photo) {
+        await deletePhoto(e.id);
+        setPhotoUrl(e.id, null);
+        e.photo = false;
+      }
+    } catch (err) {
+      alert('Foto konnte nicht gespeichert werden: ' + err.message);
     }
-  } catch (err) {
-    alert('Foto konnte nicht gespeichert werden: ' + err.message);
   }
   save();
   renderCount();
-  const row = main.querySelector(`[data-id="${p.id}"]`);
+  const row = main.querySelector(`[data-id="${e.id}"]`);
   if (row) {
     row.scrollIntoView({ block: 'center' });
     row.classList.add('moved');
   }
-  if (next) openProduct(null, idx + 1);
+  if (next) openEntry(null, idx + 1, 'product');
   else productDlg.close();
 }
 
-async function deleteProduct(id) {
-  const list = cur().products;
-  const i = list.findIndex(x => x.id === id);
+async function deleteEntry(id) {
+  const i = state.route.findIndex(x => x.id === id);
   if (i < 0) return;
-  const p = list[i];
-  if (!await ask({ title: 'Produkt löschen?', text: `„${p.name}“ wird aus der Liste für ${supName()} entfernt.`, yes: 'Löschen', no: 'Abbrechen', danger: true })) return;
-  list.splice(i, 1);
-  if (p.photo) {
-    setPhotoUrl(p.id, null);
-    deletePhoto(p.id).catch(console.error);
+  const e = state.route[i];
+  let text;
+  if (isSection(e)) {
+    text = `Die Überschrift „${e.name}“ wird entfernt. Die Produkte darunter bleiben erhalten.`;
+  } else {
+    const names = SUPPLIERS.filter(s => e.sup[s.key]).map(s => s.name);
+    text = `„${e.name}“ wird gelöscht` + (names.length > 1
+      ? `, und zwar bei ${names.join(' und ')}. Soll es nur bei einem Lieferanten wegfallen, öffne das Produkt und nimm dort den Haken raus.`
+      : '.');
+  }
+  const title = isSection(e) ? 'Abschnitt löschen?' : 'Produkt löschen?';
+  if (!await ask({ title, text, yes: 'Löschen', no: 'Abbrechen', danger: true })) return;
+  state.route.splice(i, 1);
+  if (e.photo) {
+    setPhotoUrl(e.id, null);
+    deletePhoto(e.id).catch(console.error);
   }
   save();
   if (productDlg.open) productDlg.close();
@@ -499,9 +775,9 @@ productDlg.addEventListener('click', e => {
     case 'gal': return $('#galInput').click();
     case 'rmphoto': pd.photo = null; return showPhotoPreview();
     case 'cancel': return productDlg.close();
-    case 'save': return saveProduct(false);
-    case 'save-next': return saveProduct(true);
-    case 'delete': return deleteProduct(pd.id);
+    case 'save': return saveEntry(false);
+    case 'save-next': return saveEntry(true);
+    case 'delete': return deleteEntry(pd.id);
   }
 });
 productDlg.addEventListener('close', () => { pd = null; });
@@ -517,9 +793,14 @@ function showLastBackup() {
     : 'Noch keine Sicherung gespeichert.';
 }
 
-$('#menuBtn').addEventListener('click', () => {
+function openMenu() {
   showLastBackup();
   menuDlg.showModal();
+}
+$('#menuBtn').addEventListener('click', openMenu);
+// Erinnerung oben ausblenden, sobald gesichert wurde
+menuDlg.addEventListener('close', () => {
+  if (state.ui.view === 'count' && main.querySelector('.notice') && !backupNotice()) main.querySelector('.notice').remove();
 });
 
 const blobToDataUrl = blob => new Promise((res, rej) => {
@@ -532,7 +813,7 @@ const blobToDataUrl = blob => new Promise((res, rej) => {
 $('#exportBtn').addEventListener('click', async () => {
   try {
     const photos = await loadAllPhotos();
-    const out = { app: 'bestellapp', version: 1, exported: new Date().toISOString(), suppliers: state.suppliers, photos: {} };
+    const out = { app: 'bestellapp', version: 2, exported: new Date().toISOString(), route: state.route, orders: state.orders, photos: {} };
     for (const [id, blob] of photos) out.photos[id] = await blobToDataUrl(blob);
     const file = new Blob([JSON.stringify(out)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -561,10 +842,11 @@ $('#importInput').addEventListener('change', async e => {
     alert('Sicherung kann nicht gelesen werden: ' + err.message);
     return;
   }
-  const n = SUPPLIERS.reduce((sum, s) => sum + (((data.suppliers || {})[s.key] || {}).products || []).length, 0);
+  // Sicherungen der alten Fassung (zwei Listen) werden dabei automatisch umgebaut
+  const fresh = normalize({ route: data.route, suppliers: data.suppliers, orders: data.orders, ui: { ...state.ui, scroll: {} } });
+  const n = fresh.route.filter(isProduct).length;
   if (!await ask({ title: 'Sicherung laden?', text: `Die Sicherung enthält ${n} Produkte. Alles, was gerade in der App ist, wird dadurch ersetzt.`, yes: 'Laden', no: 'Abbrechen', danger: true })) return;
   try {
-    const fresh = normalize({ suppliers: data.suppliers, ui: { ...state.ui, scroll: {} } });
     await clearPhotos();
     for (const url of photoUrls.values()) URL.revokeObjectURL(url);
     photoUrls.clear();
@@ -575,6 +857,7 @@ $('#importInput').addEventListener('change', async e => {
     }
     state = fresh;
     editing = false;
+    search = '';
     save();
     menuDlg.close();
     render();
@@ -586,18 +869,19 @@ $('#importInput').addEventListener('change', async e => {
 // ---------- Start ----------
 
 async function init() {
+  save(); // hält einen eventuell umgebauten alten Stand sofort fest
   render();
   try {
     const photos = await loadAllPhotos();
-    const ids = new Set(SUPPLIERS.flatMap(s => state.suppliers[s.key].products.map(p => p.id)));
+    const ids = new Set(state.route.filter(isProduct).map(p => p.id));
     for (const [id, blob] of photos) {
       if (ids.has(id)) setPhotoUrl(id, blob);
       else deletePhoto(id).catch(console.error); // Foto eines gelöschten Produkts
     }
     // Fotos in die schon angezeigte Liste einsetzen, ohne die Scrollposition zu verändern
-    if (photoUrls.size && state.ui.view === 'count') {
+    if (photoUrls.size && state.ui.view === 'count' && $('#list')) {
       const y = scrollY;
-      renderCount();
+      renderList();
       scrollTo(0, y);
     }
   } catch (err) {

@@ -3,25 +3,29 @@
 <script>
 // Füllt die App mit Beispieldaten für Screenshots. ?view=order|count, ?sup=lekkerland|tabacon
 const params = new URLSearchParams(location.search);
-const names = ['Brötchen hell', 'Croissant', 'Laugenbrezel', 'Coca-Cola 0,5 l', 'Red Bull 0,25 l', 'Haribo Goldbären 175 g',
-  'Marlboro Rot 10 €', 'Marlboro Gold 10 €', 'L&M Blue 9 €', 'Kaugummi Airwaves', 'Feuerzeug Clipper'];
-const counts = [6, 0, 4, 0, 12, 0, 3, 2, 0, 0, 5];
-const products = names.map((name, i) => ({ id: 'p' + i, name, count: counts[i], photo: false }));
-const order = {
-  created: Date.now() - 3600e3,
-  items: products.filter(p => p.count).map(p => ({ id: p.id, name: p.name, count: p.count, done: false }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'de')),
-};
-order.items[0].done = order.items[1].done = true;
+const L = { lekkerland: true, tabacon: false }, T = { lekkerland: false, tabacon: true }, B = { lekkerland: true, tabacon: true };
+const entries = [
+  ['#', 'Backwaren'], ['Brötchen hell', B, 6, 20], ['Croissant', L, 0, 8], ['Laugenbrezel', L, 4, 10],
+  ['#', 'Kühlschrank'], ['Coca-Cola 0,5 l', L, 0, 12], ['Red Bull 0,25 l', B, 12, 24],
+  ['#', 'Kasse'], ['Haribo Goldbären 175 g', L, 0, null], ['Marlboro Rot 10 €', B, 3, 10], ['Marlboro Gold 10 €', T, 2, 6],
+  ['L&M Blue 9 €', T, 0, 5], ['Feuerzeug Clipper', B, 5, 20],
+];
+const route = entries.map(([name, sup, n, soll], i) => name === '#'
+  ? { id: 's' + i, kind: 'section', name: sup }
+  : { id: 'p' + i, kind: 'product', name, photo: false, soll, sup, count: { lekkerland: sup.lekkerland ? n : 0, tabacon: 0 } });
+const items = route.filter(e => e.kind === 'product' && e.count.lekkerland)
+  .map(p => ({ id: p.id, name: p.name, count: p.count.lekkerland, done: false }))
+  .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+items[0].done = items[1].done = true;
 localStorage.setItem('bestellapp', JSON.stringify({
-  suppliers: { lekkerland: { products, order }, tabacon: { products: [], order: null } },
-  ui: { supplier: params.get('sup') || 'lekkerland', view: params.get('view') || 'count', scroll: {}, lastBackup: null },
+  v: 2, route, orders: { lekkerland: { created: Date.now() - 3600e3, items }, tabacon: null },
+  ui: { supplier: params.get('sup') || 'lekkerland', view: params.get('view') || 'count', scroll: {}, lastBackup: params.has('nobackup') ? null : Date.now() },
 }));
 </script>
 <style>body { margin: 0; } iframe { border: 0; width: 412px; height: 915px; display: block; }</style>
 <iframe src="../index.html"></iframe>
 <script>
-// ?edit=p6 öffnet das Bearbeiten-Fenster dieses Produkts, ?edit=keins nur den Bearbeiten-Modus
+// ?edit=p9 öffnet das Bearbeiten-Fenster dieses Produkts, ?edit=keins nur den Bearbeiten-Modus
 if (params.get('edit')) {
   const timer = setInterval(() => {
     const doc = document.querySelector('iframe').contentDocument;

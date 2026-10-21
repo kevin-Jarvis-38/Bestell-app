@@ -5,7 +5,7 @@
 <pre id="log">läuft…</pre>
 <iframe id="app" style="width:412px;height:900px"></iframe>
 <script>
-// Spielt die wichtigsten Abläufe der App durch und schreibt das Ergebnis in #log.
+// Spielt die wichtigsten Abläufe der App durch und schickt das Ergebnis an server.ps1.
 const log = [];
 let fails = 0;
 const check = (ok, msg) => {
@@ -26,9 +26,15 @@ const q = s => d().querySelector(s);
 const qa = s => [...d().querySelectorAll(s)];
 const click = s => { const el = typeof s === 'string' ? q(s) : s; el.click(); };
 const stored = () => JSON.parse(w().localStorage.getItem('bestellapp'));
+const route = () => stored().route;
+const names = () => route().map(e => (e.kind === 'section' ? '#' : '') + e.name).join('|');
+const byNameId = n => route().find(e => e.name === n).id;
+const type = (sel, value, ev = 'input') => { q(sel).value = value; q(sel).dispatchEvent(new (w().Event)(ev, { bubbles: true })); };
 
-async function addProduct(name, { next = false, photo = false } = {}) {
+async function fill(name, { sup, soll, photo = false } = {}) {
   q('#pName').value = name;
+  if (sup) for (const cb of qa('#pSup input')) cb.checked = sup.includes(cb.value);
+  if (soll !== undefined) q('#pSoll').value = soll;
   if (photo) {
     const c = d().createElement('canvas'); c.width = 1200; c.height = 900;
     const g = c.getContext('2d'); g.fillStyle = '#c00'; g.fillRect(0, 0, 1200, 900);
@@ -38,115 +44,155 @@ async function addProduct(name, { next = false, photo = false } = {}) {
     q('#camInput').dispatchEvent(new (w().Event)('change'));
     await wait(400);
   }
-  click(`#productDlg [data-pact="${next ? 'save-next' : 'save'}"]`);
-  await wait(300);
 }
-async function answer(yes) { await wait(100); click(yes ? '#askYes' : '#askNo'); await wait(200); }
+async function saveDlg(next = false) { click(`#productDlg [data-pact="${next ? 'save-next' : 'save'}"]`); await wait(300); }
+async function answer(yes) { await wait(100); click(yes ? '#askYes' : '#askNo'); await wait(250); }
+async function reset() {
+  w().localStorage.clear();
+  await new Promise(r => { const req = w().indexedDB.deleteDatabase('bestellapp-fotos'); req.onsuccess = req.onerror = req.onblocked = r; });
+}
 
 (async () => {
   try {
     step('lade App');
     await load();
-    step('lösche alte Daten');
-    w().localStorage.clear();
-    await new Promise(r => { const req = w().indexedDB.deleteDatabase('bestellapp-fotos'); req.onsuccess = req.onerror = req.onblocked = r; });
-    step('lade App neu');
-    await load();
+    await reset();
 
-    check(q('.empty') && q('[data-act=add]'), 'Leere Liste zeigt "Erstes Produkt anlegen"');
-    click('[data-act=add]');
-    check(q('#productDlg').open, 'Produktfenster öffnet sich');
-    await addProduct('Marlboro Rot 10 €', { next: true, photo: true });
-    check(q('#productDlg').open && q('#pName').value === '' && q('#pPos').value === '2', '"Speichern & nächstes" leert das Fenster, Position 2');
-    await addProduct('Brötchen', { next: true });
-    await addProduct('Apfelschorle');
-    check(!q('#productDlg').open, 'Speichern schließt das Fenster');
+    // ---------- Umbau alter Daten (zwei getrennte Listen) ----------
+    w().localStorage.setItem('bestellapp', JSON.stringify({
+      suppliers: {
+        lekkerland: { products: [{ id: 'a', name: 'Apfelschorle', count: 2, photo: false }, { id: 'b', name: 'Brötchen', count: 0, photo: false }], order: null },
+        tabacon: { products: [{ id: 'b2', name: 'brötchen ', count: 1, photo: true }, { id: 'c', name: 'Camel', count: 0, photo: false }],
+          order: { created: 1, items: [{ id: 'c', name: 'Camel', count: 3, done: true }] } },
+      },
+      ui: { supplier: 'tabacon', view: 'count', scroll: {} },
+    }));
+    await load();
     let s = stored();
-    check(s.suppliers.lekkerland.products.map(p => p.name).join('|') === 'Marlboro Rot 10 €|Brötchen|Apfelschorle', 'Reihenfolge = Anlege-Reihenfolge');
-    check(s.suppliers.lekkerland.products[0].photo === true && q('.row img'), 'Foto gespeichert und angezeigt');
+    check(names() === 'Apfelschorle|Brötchen|Camel', 'Alte Listen werden zu einem Laufweg');
+    const br = s.route[1];
+    check(br.sup.lekkerland && br.sup.tabacon && br.count.tabacon === 1 && br.id === 'b2' && br.photo, 'Gleichnamige Produkte zusammengelegt (mit Foto)');
+    check(s.route[0].count.lekkerland === 2 && !s.route[0].sup.tabacon, 'Zähler und Lieferant bleiben erhalten');
+    check(s.orders.tabacon.items[0].name === 'Camel', 'Alte Bestellliste bleibt erhalten');
+    check(!!w().localStorage.getItem('bestellapp-v1'), 'Alter Stand wird zusätzlich aufgehoben');
 
-    // Reihenfolge ändern: Apfelschorle eins hoch
-    const apfel = s.suppliers.lekkerland.products[2].id;
-    click(`[data-id="${apfel}"] [data-act=up]`);
-    check(stored().suppliers.lekkerland.products.map(p => p.name).join('|') === 'Marlboro Rot 10 €|Apfelschorle|Brötchen', 'Pfeil hoch verschiebt');
-    // Position per Nummer: Brötchen an Position 1
-    const broet = stored().suppliers.lekkerland.products[2].id;
-    click(`[data-id="${broet}"] [data-act=open]`);
-    q('#pPos').value = '1';
-    click('#productDlg [data-pact=save]'); await wait(300);
-    check(stored().suppliers.lekkerland.products.map(p => p.name).join('|') === 'Brötchen|Marlboro Rot 10 €|Apfelschorle', 'Position per Nummer setzen');
-
-    click('[data-act=toggle-edit]');
-    check(q('[data-act=confirm]'), 'Nach "Fertig" ist "Liste bestätigen" unten');
-
-    // Zählen
-    const marl = stored().suppliers.lekkerland.products[1].id;
-    for (let i = 0; i < 3; i++) click(`[data-id="${marl}"] [data-act=plus]`);
-    click(`[data-id="${apfel}"] [data-act=plus]`);
-    click(`[data-id="${apfel}"] [data-act=plus]`);
-    click(`[data-id="${apfel}"] [data-act=minus]`);
-    check(q(`[data-id="${marl}"] .count`).textContent === '3', '3× +1 ergibt 3');
-    check(q('#badgeCount').textContent === '2', 'Zähler-Abzeichen zeigt 2 Produkte');
-
-    // Nach Neuladen noch da?
+    step('neu anfangen');
+    await reset();
     await load();
-    check(q(`[data-id="${marl}"] .count`).textContent === '3' && q(`[data-id="${apfel}"] .count`).textContent === '1', 'Zählstand bleibt nach Neustart erhalten');
-    check(q(`[data-id="${marl}"] img`), 'Foto bleibt nach Neustart erhalten');
 
-    // Bestätigen mit Nein
+    // ---------- Laufweg mit Abschnitten anlegen ----------
+    check(q('.empty [data-act=add]') && q('.empty [data-act=add-section]'), 'Leere App bietet Produkt und Abschnitt an');
+    click('[data-act=add-section]');
+    check(q('#pProductFields').hidden && q('#pPhotoRow').hidden, 'Abschnitt-Fenster ohne Foto und Lieferanten');
+    await fill('Backwaren'); await saveDlg();
+    click('[data-act=add]');
+    check(q('#pSup input[value=lekkerland]').checked && !q('#pSup input[value=tabacon]').checked, 'Neues Produkt: aktueller Lieferant vorausgewählt');
+    await fill('Brötchen', { sup: ['lekkerland', 'tabacon'], soll: 6, photo: true }); await saveDlg(true);
+    check(q('#productDlg').open && q('#pName').value === '' && q('#pPos').value === '3', '"Speichern & nächstes" leert das Fenster, Position 3');
+    check(q('#pSup input[value=tabacon]').checked && q('#pSup input[value=lekkerland]').checked, 'Haken vom letzten Produkt werden übernommen');
+    check(q('#pSec').value === byNameId('Backwaren'), 'Abschnitt wird vorgeschlagen');
+    await fill('Croissant'); await saveDlg(true);
+    await fill('Laugenbrezel', { sup: ['lekkerland'] }); await saveDlg();
+    click('[data-act=add-section]'); await fill('Tabak'); await saveDlg();
+    click('[data-act=add]');
+    await fill('Marlboro Rot', { sup: [] }); await saveDlg();
+    check(q('#productDlg').open && !q('#pSupHint').hidden, 'Ohne Lieferant wird nicht gespeichert');
+    await fill('Marlboro Rot', { sup: ['tabacon'], soll: 10 }); await saveDlg();
+    check(names() === '#Backwaren|Brötchen|Croissant|Laugenbrezel|#Tabak|Marlboro Rot', 'Laufweg in Anlege-Reihenfolge');
+    s = stored();
+    check(s.route[1].soll === 6 && s.route[2].soll === null && s.route[1].photo, 'Soll-Bestand und Foto gespeichert');
+
+    // ---------- Abschnitt im Fenster wechseln ----------
+    click(`[data-id="${byNameId('Croissant')}"] [data-act=open]`);
+    check(q('#pSec').value === byNameId('Backwaren'), 'Fenster zeigt den Abschnitt des Produkts');
+    type('#pSec', byNameId('Tabak'), 'change');
+    check(q('#pPos').value === '6', 'Abschnitt wählen setzt die Position ans Ende des Abschnitts');
+    await saveDlg();
+    check(names() === '#Backwaren|Brötchen|Laugenbrezel|#Tabak|Marlboro Rot|Croissant', 'Produkt in anderen Abschnitt verschoben');
+    click(`[data-id="${byNameId('Croissant')}"] [data-act=open]`);
+    type('#pPos', '3');
+    check(q('#pSec').value === byNameId('Backwaren'), 'Position ändern zeigt den passenden Abschnitt');
+    await saveDlg();
+    check(names() === '#Backwaren|Brötchen|Croissant|Laugenbrezel|#Tabak|Marlboro Rot', 'Position per Nummer setzen');
+    click(`[data-id="${byNameId('Tabak')}"] [data-act=up]`);
+    check(names() === '#Backwaren|Brötchen|Croissant|#Tabak|Laugenbrezel|Marlboro Rot', 'Abschnitt mit ▲ verschieben');
+    click(`[data-id="${byNameId('Tabak')}"] [data-act=down]`);
+
+    // ---------- Durchgehen je Lieferant ----------
+    click('[data-act=toggle-edit]');
+    check(qa('#list .sec').length === 1 && q('#list .sec').textContent === 'Backwaren', 'Lekkerland: nur Abschnitte mit Lekkerland-Produkten');
+    check(qa('#list .row').length === 3 && !q('#secChips').hidden && qa('#secChips button').length === 1, 'Lekkerland: 3 Produkte, 1 Sprungknopf');
+    check(q(`[data-id="${byNameId('Brötchen')}"] .soll`).textContent === 'Soll 6', 'Soll-Bestand steht beim Produkt');
+    click('[data-sup-tab=tabacon]');
+    check(qa('#list .sec').length === 2 && qa('#list .row').length === 3, 'Tabacon: 2 Abschnitte, 3 Produkte');
+
+    // ---------- Suche ----------
+    type('#search', 'marl');
+    check(qa('#list .row').length === 1 && qa('#list .sec').length === 0 && q('#secChips').hidden, 'Suche zeigt nur Treffer');
+    type('#search', 'xyz');
+    check(q('#list .none'), 'Suche ohne Treffer');
+    click('[data-act=clear-search]');
+    check(qa('#list .row').length === 3 && q('#search').value === '', 'Suche leeren');
+
+    // ---------- Zählen getrennt je Lieferant ----------
+    const marl = byNameId('Marlboro Rot'), broe = byNameId('Brötchen');
+    click(`[data-id="${marl}"] [data-act=plus]`); click(`[data-id="${marl}"] [data-act=plus]`);
+    click(`[data-id="${broe}"] [data-act=plus]`);
+    click('[data-sup-tab=lekkerland]');
+    for (let i = 0; i < 3; i++) click(`[data-id="${broe}"] [data-act=plus]`);
+    s = stored();
+    let b = s.route.find(e => e.id === broe);
+    check(b.count.lekkerland === 3 && b.count.tabacon === 1, 'Zähler je Lieferant getrennt');
+    await load();
+    check(q(`[data-id="${broe}"] .count`).textContent === '3' && q(`[data-id="${broe}"] img`), 'Zähler und Foto bleiben nach Neustart');
+
+    // ---------- Bestätigen ----------
+    click('[data-sup-tab=tabacon]');
     click('[data-act=confirm]');
-    check(q('#askDlg').open && q('#askTitle').textContent === 'Bist du sicher?', 'Abfrage "Bist du sicher?" erscheint');
+    check(q('#askTitle').textContent === 'Bist du sicher?', 'Abfrage "Bist du sicher?"');
     await answer(false);
-    check(stored().suppliers.lekkerland.order === null && stored().ui.view === 'count', '"Nein" ändert nichts');
+    check(stored().orders.tabacon === null, '"Nein" ändert nichts');
     click('[data-act=confirm]');
     await answer(true);
     s = stored();
-    check(s.ui.view === 'order', '"Ja" wechselt zur Bestellliste');
-    check(s.suppliers.lekkerland.order.items.map(i => i.count + 'x ' + i.name).join('|') === '1x Apfelschorle|3x Marlboro Rot 10 €', 'Bestellliste alphabetisch, ohne Nullen');
-    check(s.suppliers.lekkerland.products.every(p => p.count === 0), 'Zähler danach auf 0');
+    check(s.ui.view === 'order' && s.orders.tabacon.items.map(i => i.count + 'x ' + i.name).join('|') === '1x Brötchen|2x Marlboro Rot', 'Bestellliste alphabetisch');
+    b = s.route.find(e => e.id === broe);
+    check(b.count.tabacon === 0 && b.count.lekkerland === 3, 'Nur die Tabacon-Zähler werden zurückgesetzt');
 
-    // Abhaken
+    // ---------- Teilen ----------
+    let shared = null;
+    w().navigator.share = async data => { shared = data; };
+    click('[data-act=share]'); await wait(100);
+    check(shared && shared.text.includes('Bestellung Tabacon') && shared.text.includes('2× Marlboro Rot'), 'Liste teilen');
+
+    // ---------- Abhaken ----------
     click('.orow[data-i="0"]');
-    check(q('.orow[data-i="0"]').classList.contains('done') && getComputedStyle(q('.orow[data-i="0"] .name')).textDecorationLine === 'line-through', 'Abhaken streicht durch');
     await load();
-    check(q('.orow[data-i="0"]').classList.contains('done') && q('#doneText').textContent.startsWith('1 von 2'), 'Haken bleibt nach Neustart erhalten');
-    click('.orow[data-i="1"]');
-    check(!q('#allDone').hidden, '"Alles eingegeben" bei allen Haken');
+    check(q('.orow[data-i="0"]').classList.contains('done') && q('#doneText').textContent.startsWith('1 von 2'), 'Haken bleibt nach Neustart');
 
-    // Zweiter Lieferant ist getrennt
-    click('[data-sup-tab=tabacon]');
-    check(q('.empty') && stored().ui.supplier === 'tabacon', 'Tabacon hat eigene (leere) Bestellliste');
+    // ---------- Sicherungs-Erinnerung ----------
     click('[data-view-tab=count]');
-    check(q('.empty [data-act=add]'), 'Tabacon hat eigene (leere) Produktliste');
-    click('[data-act=add]');
-    await addProduct('Tabak Pouch');
-    check(stored().suppliers.tabacon.products.length === 1 && stored().suppliers.lekkerland.products.length === 3, 'Listen bleiben getrennt');
+    check(q('.notice'), 'Erinnerung, wenn noch nie gesichert');
+    click('.notice [data-act=backup]');
+    check(q('#menuDlg').open, 'Erinnerung öffnet die Sicherung');
+    click('#exportBtn'); await wait(500);
+    click('#menuDlg [value=close]'); await wait(100);
+    check(stored().ui.lastBackup && !q('.notice'), 'Nach dem Sichern verschwindet die Erinnerung');
 
-    // Leere Bestätigung
+    // ---------- Löschen ----------
     click('[data-act=toggle-edit]');
-    click('[data-act=confirm]');
-    check(q('#askTitle').textContent === 'Noch nichts ausgewählt' && q('#askNo').hidden, 'Bestätigen ohne Auswahl gibt Hinweis');
+    click(`[data-id="${byNameId('Tabak')}"] [data-act=delete]`);
+    check(q('#askTitle').textContent === 'Abschnitt löschen?', 'Abschnitt löschen fragt nach');
     await answer(true);
-
-    // Löschen
-    click('[data-act=toggle-edit]');
-    click('[data-act=open]');
-    click('#productDlg [data-pact=delete]');
-    await answer(true); await wait(200);
-    check(stored().suppliers.tabacon.products.length === 0, 'Produkt löschen im Fenster');
-
-    // Löschen per Papierkorb in der Zeile
-    click('[data-act=add]');
-    await addProduct('Snus A', { next: true });
-    await addProduct('Snus B');
-    const snusA = stored().suppliers.tabacon.products[0].id;
-    click(`[data-id="${snusA}"] [data-act=delete]`);
-    check(q('#askDlg').open && q('#askTitle').textContent === 'Produkt löschen?', 'Papierkorb fragt nach');
+    check(names() === '#Backwaren|Brötchen|Croissant|Laugenbrezel|Marlboro Rot', 'Abschnitt weg, Produkte bleiben');
+    click(`[data-id="${broe}"] [data-act=delete]`);
+    check(q('#askText').textContent.includes('Lekkerland und Tabacon'), 'Löschen nennt beide Lieferanten');
     await answer(false);
-    check(stored().suppliers.tabacon.products.length === 2, 'Abbrechen löscht nichts');
-    click(`[data-id="${snusA}"] [data-act=delete]`);
-    await answer(true); await wait(200);
-    check(stored().suppliers.tabacon.products.map(p => p.name).join('|') === 'Snus B' && !q(`[data-id="${snusA}"]`), 'Papierkorb löscht das Produkt');
+    check(names().includes('Brötchen'), 'Abbrechen löscht nichts');
+    click(`[data-id="${broe}"] [data-act=open]`);
+    click('#productDlg [data-pact=delete]');
+    await answer(true);
+    check(!names().includes('Brötchen') && !q('#productDlg').open, 'Löschen im Fenster');
   } catch (e) {
     check(false, 'Abbruch: ' + e.stack);
   }
