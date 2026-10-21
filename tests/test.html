@@ -29,6 +29,7 @@ const stored = () => JSON.parse(w().localStorage.getItem('bestellapp'));
 const route = () => stored().route;
 const names = () => route().map(e => (e.kind === 'section' ? '#' : '') + e.name).join('|');
 const byNameId = n => route().find(e => e.name === n).id;
+const orderList = () => qa('.orow').map(b => b.querySelector('.qty').textContent.replace('×', 'x') + ' ' + b.querySelector('.name').firstChild.textContent.trim()).join('|');
 const type = (sel, value, ev = 'input') => { q(sel).value = value; q(sel).dispatchEvent(new (w().Event)(ev, { bubbles: true })); };
 
 async function fill(name, { sup, soll, photo = false } = {}) {
@@ -73,7 +74,7 @@ async function reset() {
     const br = s.route[1];
     check(br.sup.lekkerland && br.sup.tabacon && br.count.tabacon === 1 && br.id === 'b2' && br.photo, 'Gleichnamige Produkte zusammengelegt (mit Foto)');
     check(s.route[0].count.lekkerland === 2 && !s.route[0].sup.tabacon, 'Zähler und Lieferant bleiben erhalten');
-    check(s.orders.tabacon.items[0].name === 'Camel', 'Alte Bestellliste bleibt erhalten');
+    check(s.route[2].count.tabacon === 3 && s.orders.tabacon.done.c === 3, 'Alte Bestellliste wird zu Zählern mit Haken');
     check(!!w().localStorage.getItem('bestellapp-v1'), 'Alter Stand wird zusätzlich aufgehoben');
 
     step('neu anfangen');
@@ -156,18 +157,18 @@ async function reset() {
     await load();
     check(q(`[data-id="${broe}"] .count`).textContent === '3' && q(`[data-id="${broe}"] img`), 'Zähler und Foto bleiben nach Neustart');
 
-    // ---------- Bestätigen ----------
+    // ---------- Zur Bestellliste ----------
     click('[data-sup-tab=tabacon]');
-    click('[data-act=confirm]');
-    check(q('#askTitle').textContent === 'Bist du sicher?', 'Abfrage "Bist du sicher?"');
-    await answer(false);
-    check(stored().orders.tabacon === null, '"Nein" ändert nichts');
-    click('[data-act=confirm]');
-    await answer(true);
-    s = stored();
-    check(s.ui.view === 'order' && s.orders.tabacon.items.map(i => i.count + 'x ' + i.name).join('|') === '1x Brötchen|2x Marlboro Rot', 'Bestellliste alphabetisch');
-    b = s.route.find(e => e.id === broe);
-    check(b.count.tabacon === 0 && b.count.lekkerland === 3, 'Nur die Tabacon-Zähler werden zurückgesetzt');
+    click('[data-act=to-order]'); await wait(100);
+    check(!q('#askDlg').open && stored().ui.view === 'order', '"Zur Bestellliste" ohne Sicherheitsabfrage');
+    check(orderList() === '1x Brötchen|2x Marlboro Rot', 'Bestellliste alphabetisch aus den Zählern');
+    b = stored().route.find(e => e.id === broe);
+    check(b.count.tabacon === 1 && b.count.lekkerland === 3, 'Zähler bleiben stehen');
+    click('[data-view-tab=count]');
+    click(`[data-id="${byNameId('Croissant')}"] [data-act=plus]`);
+    click('[data-view-tab=order]');
+    check(orderList() === '1x Brötchen|1x Croissant|2x Marlboro Rot', 'Nachträglich hinzugefügtes Produkt steht in der Bestellliste');
+    check(q('#badgeOrder').textContent === '3', 'Abzeichen zählt offene Produkte');
 
     // ---------- Teilen ----------
     let shared = null;
@@ -176,15 +177,33 @@ async function reset() {
     check(shared && shared.text.includes('Bestellung Tabacon') && shared.text.includes('2× Marlboro Rot'), 'Liste teilen');
 
     // ---------- Abhaken ----------
-    click('.orow[data-i="0"]');
+    click(`.orow[data-id="${broe}"]`);
     await load();
-    check(q('.orow[data-i="0"]').classList.contains('done') && q('#doneText').textContent.startsWith('1 von 2'), 'Haken bleibt nach Neustart');
-    click('.orow[data-i="1"]');
-    check(q('canvas.confetti'), 'Konfetti beim letzten Haken');
+    check(q(`.orow[data-id="${broe}"]`).classList.contains('done') && q('#doneText').textContent.startsWith('1 von 3'), 'Haken bleibt nach Neustart');
+    click('[data-view-tab=count]');
+    check(q(`[data-id="${broe}"] .entered`), 'Durchgehen zeigt "✓ eingegeben"');
+    click(`[data-id="${broe}"] [data-act=plus]`);
+    check(!q(`[data-id="${broe}"] .entered`), 'Menge geändert: "eingegeben" verschwindet');
+    click('[data-view-tab=order]');
+    const changed = q(`.orow[data-id="${broe}"]`);
+    check(!changed.classList.contains('done') && changed.querySelector('.changed').textContent.includes('vorher 1×'), 'Bestellliste zeigt "geändert, vorher 1×"');
+    for (const btn of qa('.orow')) btn.click();
+    check(q('canvas.confetti') && !q('#allDone').hidden, 'Konfetti beim letzten Haken');
     check(d().querySelector('meta[name=theme-color]').content === '#1c7ed6', 'Statusleiste in Tabacon-Blau');
 
+    // ---------- Bestellliste löschen ----------
+    click('[data-act=clear-order]');
+    check(q('#askTitle').textContent === 'Bestellliste löschen?', 'Bestellliste löschen fragt nach');
+    await answer(false);
+    check(orderList().startsWith('2x Brötchen'), 'Abbrechen lässt alles stehen');
+    click('[data-act=clear-order]');
+    await answer(true);
+    s = stored();
+    check(s.route.filter(e => e.kind === 'product').every(p => p.count.tabacon === 0) && Object.keys(s.orders.tabacon.done).length === 0,
+      'Bestellliste löschen setzt Tabacon-Zähler auf 0');
+    check(s.route.find(e => e.id === broe).count.lekkerland === 3 && s.ui.view === 'count', 'Lekkerland bleibt unberührt, zurück zu Durchgehen');
+
     // ---------- Sicherungs-Erinnerung ----------
-    click('[data-view-tab=count]');
     check(q('.notice'), 'Erinnerung, wenn noch nie gesichert');
     click('.notice [data-act=backup]');
     check(q('#menuDlg').open, 'Erinnerung öffnet die Sicherung');

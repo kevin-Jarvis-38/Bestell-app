@@ -6,7 +6,7 @@ const SUPPLIERS = [
   { key: 'lekkerland', name: 'Lekkerland', color: '#e03131' },
   { key: 'tabacon', name: 'Tabacon', color: '#1c7ed6' },
 ];
-const VERSION = '2.1';
+const VERSION = '2.2';
 const STORAGE_KEY = 'bestellapp';
 const PHOTO_MAX = 480; // längste Bildkante in Pixeln, hält die Fotos klein
 const BACKUP_DAYS = 7; // so alt darf die letzte Sicherung sein, bevor die App daran erinnert
@@ -31,12 +31,35 @@ const TRASH = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" strok
 // route:  der Laufweg durch den Laden, gemeinsam für alle Lieferanten. Er enthält Abschnitte
 //         { id, kind: 'section', name, emoji } und Produkte
 //         { id, kind: 'product', name, photo, soll, sup: { lekkerland: true, … }, count: { lekkerland: 0, … } }.
-// orders: die bestätigte Bestellliste je Lieferant.
+// orders: je Lieferant { started, done: { produktId: Menge beim Abhaken } }. Die Bestellliste selbst sind alle
+//         Produkte mit Zähler > 0; abgehakt ist ein Produkt, solange seine Menge noch der beim Abhaken entspricht.
+
+const emptyOrder = () => ({ started: null, done: {} });
 
 function emptyState() {
-  const s = { v: 2, route: [], orders: {}, ui: { supplier: SUPPLIERS[0].key, view: 'count', scroll: {}, lastBackup: null, newSup: null } };
-  for (const sup of SUPPLIERS) s.orders[sup.key] = null;
+  const s = { v: 3, route: [], orders: {}, ui: { supplier: SUPPLIERS[0].key, view: 'count', scroll: {}, lastBackup: null, newSup: null } };
+  for (const sup of SUPPLIERS) s.orders[sup.key] = emptyOrder();
   return s;
+}
+
+function normalizeOrder(o, route, k) {
+  const order = emptyOrder();
+  if (!o || typeof o !== 'object') return order;
+  if (Array.isArray(o.items)) {
+    // Bis Version 2.1 war die Bestellliste eine feste Kopie und die Zähler standen danach auf 0
+    order.started = Number.isFinite(o.created) ? o.created : null;
+    for (const it of o.items) {
+      const p = route.find(e => isProduct(e) && e.id === it.id);
+      if (!p || p.count[k] > 0) continue;
+      p.sup[k] = true;
+      p.count[k] = Math.max(0, parseInt(it.count, 10) || 0);
+      if (it.done) order.done[p.id] = p.count[k];
+    }
+    return order;
+  }
+  order.started = Number.isFinite(o.started) ? o.started : null;
+  for (const [id, n] of Object.entries(o.done || {})) if (Number.isInteger(n)) order.done[id] = n;
+  return order;
 }
 
 function fixEntry(e) {
@@ -76,12 +99,12 @@ function migrateV1(suppliers) {
 function normalize(s) {
   s = s && typeof s === 'object' ? s : {};
   const base = emptyState();
-  const out = { v: 2, route: [], orders: {}, ui: Object.assign(base.ui, s.ui) };
+  const out = { v: 3, route: [], orders: {}, ui: Object.assign(base.ui, s.ui) };
   if (Array.isArray(s.route)) out.route = s.route.filter(e => e && e.id).map(fixEntry);
   else if (s.suppliers) out.route = migrateV1(s.suppliers);
   for (const sup of SUPPLIERS) {
     const o = s.orders ? s.orders[sup.key] : s.suppliers && s.suppliers[sup.key] && s.suppliers[sup.key].order;
-    out.orders[sup.key] = o && Array.isArray(o.items) ? o : null;
+    out.orders[sup.key] = normalizeOrder(o, out.route, sup.key);
   }
   if (!SUPPLIERS.some(x => x.key === out.ui.supplier)) out.ui.supplier = SUPPLIERS[0].key;
   if (out.ui.view !== 'order') out.ui.view = 'count';
@@ -118,6 +141,8 @@ let state = loadState();
 let editing = false;
 let search = '';
 const supName = () => SUPPLIERS.find(s => s.key === state.ui.supplier).name;
+const orderItems = k => state.route.filter(e => isProduct(e) && e.sup[k] && e.count[k] > 0).sort(byName);
+const isDone = (p, k) => state.orders[k].done[p.id] === p.count[k];
 
 // Was der aktuelle Lieferant beim Durchgehen sieht: seine Produkte und die Abschnitte, in denen welche stehen
 function visibleRoute(k) {
@@ -303,11 +328,9 @@ function render() {
 
 function updateBadges() {
   const k = state.ui.supplier;
-  const counted = state.route.filter(e => isProduct(e) && e.sup[k] && e.count[k] > 0).length;
-  const o = state.orders[k];
-  const open = o ? o.items.filter(i => !i.done).length : 0;
-  $('#badgeCount').textContent = counted || '';
-  $('#badgeOrder').textContent = open || '';
+  const items = orderItems(k);
+  $('#badgeCount').textContent = items.length || '';
+  $('#badgeOrder').textContent = items.filter(p => !isDone(p, k)).length || '';
 }
 
 function countSummary() {
@@ -359,7 +382,7 @@ function renderCount() {
     <ul class="list" id="list"></ul>
     ${editing
       ? '<div class="add-btns"><button class="btn big" data-act="add">+ Produkt</button><button class="btn big" data-act="add-section">+ Abschnitt</button></div>'
-      : '<button class="btn primary big confirm" data-act="confirm">Liste bestätigen</button>'}`;
+      : '<button class="btn primary big confirm" data-act="to-order">Zur Bestellliste →</button>'}`;
   renderList();
 }
 
@@ -378,15 +401,19 @@ function renderList() {
 
 const sectionHeading = s => `<li class="sec" id="sec-${s.id}">${sectionLabel(s)}</li>`;
 
-const countRow = (p, k) => `
+function countRow(p, k) {
+  const pills = (p.soll !== null ? `<small class="soll">Soll ${p.soll}</small>` : '')
+    + (p.count[k] && isDone(p, k) ? '<small class="entered">✓ eingegeben</small>' : '');
+  return `
   <li class="row${p.count[k] ? ' on' : ''}" data-id="${p.id}">
-    ${thumb(p)}<span class="name">${esc(p.name)}${p.soll !== null ? `<small class="soll">Soll ${p.soll}</small>` : ''}</span>
+    ${thumb(p)}<span class="name">${esc(p.name)}${pills ? `<span class="pills">${pills}</span>` : ''}</span>
     <span class="stepper">
       <button class="step" data-act="minus" aria-label="1 weniger"${p.count[k] ? '' : ' disabled'}>−1</button>
       <output class="count">${p.count[k]}</output>
       <button class="step plus" data-act="plus" aria-label="1 mehr">+1</button>
     </span>
   </li>`;
+}
 
 function editRow(e, i, n) {
   const tools = `
@@ -405,36 +432,48 @@ function editRow(e, i, n) {
 }
 
 function renderOrder() {
-  const o = state.orders[state.ui.supplier];
+  const k = state.ui.supplier;
+  const o = state.orders[k];
+  const items = orderItems(k);
   updateBadges();
   renderChips();
-  if (!o) {
+  if (!items.length) {
     main.innerHTML = `<div class="empty">
       <div class="empty-icon">📝</div>
-      <p>Noch keine Bestellliste für <b>${esc(supName())}</b>.</p>
-      <p>Geh unter „Durchgehen“ die Produkte durch und tippe ganz unten auf „Liste bestätigen“.</p></div>`;
+      <p>Die Bestellliste für <b>${esc(supName())}</b> ist leer.</p>
+      <p>Tippe unter „Durchgehen“ bei den Produkten auf +1. Sie erscheinen dann hier automatisch, alphabetisch sortiert.</p></div>`;
     return;
   }
   main.innerHTML = `
     <div class="bar">
-      <div class="bar-text">Erstellt ${orderDate(o)}<br><span id="doneText"></span></div>
+      <div class="bar-text">${o.started ? `Begonnen ${orderDate(o.started)}<br>` : ''}<span id="doneText"></span></div>
       <button class="btn small" data-act="share">Teilen</button>
     </div>
     <div class="progress"><span id="doneBar"></span></div>
-    <ul class="list">${o.items.map((it, i) => `
-      <li><button class="orow${it.done ? ' done' : ''}" role="checkbox" aria-checked="${it.done}" data-act="check" data-i="${i}">
-        <span class="qty">${it.count}×</span><span class="name">${esc(it.name)}</span><span class="box"></span>
-      </button></li>`).join('')}</ul>
+    <ul class="list">${items.map(p => orderRow(p, k)).join('')}</ul>
     <p class="alldone" id="allDone" hidden>Alles eingegeben ✓</p>
     <button class="btn big ghost" data-act="clear-order">Bestellliste löschen</button>`;
   updateOrderProgress();
 }
 
-const orderDate = o => new Date(o.created).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function orderRow(p, k) {
+  const checked = state.orders[k].done[p.id];
+  const done = checked === p.count[k];
+  const changed = checked !== undefined && !done;
+  return `
+    <li><button class="orow${done ? ' done' : ''}" role="checkbox" aria-checked="${done}" data-act="check" data-id="${p.id}">
+      <span class="qty">${p.count[k]}×</span>
+      <span class="name">${esc(p.name)}${changed ? `<small class="changed">geändert, vorher ${checked}×</small>` : ''}</span>
+      <span class="box"></span>
+    </button></li>`;
+}
+
+const orderDate = ts => new Date(ts).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 function updateOrderProgress() {
-  const items = state.orders[state.ui.supplier].items;
-  const done = items.filter(i => i.done).length;
+  const k = state.ui.supplier;
+  const items = orderItems(k);
+  const done = items.filter(p => isDone(p, k)).length;
   $('#doneText').innerHTML = `<b>${done}</b> von ${items.length} eingegeben`;
   $('#doneBar').style.width = (items.length ? 100 * done / items.length : 0) + '%';
   $('#allDone').hidden = done < items.length;
@@ -448,15 +487,14 @@ function changeCount(id, delta, li) {
   const p = state.route.find(x => x.id === id);
   if (!p) return;
   p.count[k] = Math.max(0, p.count[k] + delta);
+  const o = state.orders[k];
+  if (!p.count[k]) delete o.done[p.id];
+  if (delta > 0 && !o.started) o.started = Date.now();
+  if (!orderItems(k).length) state.orders[k] = emptyOrder();
   save();
   buzz();
-  li.classList.toggle('on', p.count[k] > 0);
-  const count = li.querySelector('.count');
-  count.textContent = p.count[k];
-  count.classList.remove('pop');
-  void count.offsetWidth; // Hüpf-Animation neu starten
-  count.classList.add('pop');
-  li.querySelector('[data-act=minus]').disabled = !p.count[k];
+  li.outerHTML = countRow(p, k);
+  main.querySelector(`[data-id="${id}"] .count`).classList.add('pop');
   $('#countText').innerHTML = countSummary();
   updateBadges();
 }
@@ -472,41 +510,31 @@ function move(id, delta) {
   main.querySelector(`[data-id="${id}"]`).classList.add('moved');
 }
 
-async function confirmOrder() {
-  const k = state.ui.supplier;
-  const items = state.route.filter(e => isProduct(e) && e.sup[k] && e.count[k] > 0);
-  if (!items.length) {
+async function goToOrder() {
+  if (!orderItems(state.ui.supplier).length) {
     await ask({ title: 'Noch nichts ausgewählt', text: 'Tippe bei den Produkten, die bestellt werden sollen, auf +1.', yes: 'OK', no: null });
     return;
   }
-  const pieces = items.reduce((n, p) => n + p.count[k], 0);
-  let text = `${items.length} Produkte (${pieces} Stück) kommen in die Bestellliste für ${supName()}. Danach stehen die Zähler für ${supName()} wieder auf 0.`;
-  if (state.orders[k]) text += ' Die bisherige Bestellliste wird dabei ersetzt.';
-  if (!await ask({ title: 'Bist du sicher?', text })) return;
-  state.orders[k] = {
-    created: Date.now(),
-    items: items.map(p => ({ id: p.id, name: p.name, count: p.count[k], done: false })).sort(byName),
-  };
-  for (const e of state.route) if (isProduct(e)) e.count[k] = 0;
-  state.ui.scroll[k + ':count'] = 0;
-  state.ui.scroll[k + ':order'] = 0;
+  rememberScroll();
   state.ui.view = 'order';
   search = '';
   save();
   render();
 }
 
-function toggleDone(i, btn) {
-  const items = state.orders[state.ui.supplier].items;
-  const it = items[i];
-  it.done = !it.done;
+function toggleDone(id, btn) {
+  const k = state.ui.supplier;
+  const p = state.route.find(e => e.id === id);
+  if (!p) return;
+  const done = !isDone(p, k);
+  if (done) state.orders[k].done[id] = p.count[k];
+  else delete state.orders[k].done[id];
   save();
   buzz();
-  btn.classList.toggle('done', it.done);
-  btn.classList.toggle('just', it.done);
-  btn.setAttribute('aria-checked', it.done);
+  btn.parentElement.outerHTML = orderRow(p, k);
+  if (done) main.querySelector(`[data-id="${id}"]`).classList.add('just');
   updateOrderProgress();
-  if (it.done && items.every(x => x.done)) confetti();
+  if (done && orderItems(k).every(x => isDone(x, k))) confetti();
 }
 
 function confetti() {
@@ -554,16 +582,29 @@ function confetti() {
 }
 
 async function clearOrder() {
-  if (!await ask({ title: 'Bestellliste löschen?', text: `Die Bestellliste für ${supName()} wird gelöscht.`, yes: 'Löschen', no: 'Abbrechen', danger: true })) return;
-  state.orders[state.ui.supplier] = null;
+  const k = state.ui.supplier;
+  if (!await ask({
+    title: 'Bestellliste löschen?',
+    text: `Alle Zähler für ${supName()} gehen auf 0 und die Haken verschwinden. Mach das, wenn die Bestellung abgeschickt ist.`,
+    yes: 'Löschen',
+    no: 'Abbrechen',
+    danger: true,
+  })) return;
+  for (const e of state.route) if (isProduct(e)) e.count[k] = 0;
+  state.orders[k] = emptyOrder();
+  state.ui.scroll[k + ':count'] = 0;
+  state.ui.scroll[k + ':order'] = 0;
+  state.ui.view = 'count';
   save();
   render();
 }
 
 async function shareOrder() {
-  const o = state.orders[state.ui.supplier];
+  const k = state.ui.supplier;
+  const o = state.orders[k];
   const title = `Bestellung ${supName()}`;
-  const text = `${title} (${orderDate(o)})\n` + o.items.map(i => `${i.count}× ${i.name}`).join('\n');
+  const text = title + (o.started ? ` (${orderDate(o.started)})` : '') + '\n'
+    + orderItems(k).map(p => `${p.count[k]}× ${p.name}`).join('\n');
   if (navigator.share) {
     try {
       await navigator.share({ title, text });
@@ -595,8 +636,8 @@ main.addEventListener('click', e => {
     case 'up': return move(id, -1);
     case 'down': return move(id, 1);
     case 'delete': return deleteEntry(id);
-    case 'confirm': return confirmOrder();
-    case 'check': return toggleDone(+btn.dataset.i, btn);
+    case 'to-order': return goToOrder();
+    case 'check': return toggleDone(id, btn);
     case 'clear-order': return clearOrder();
     case 'share': return shareOrder();
     case 'backup': return openMenu();
@@ -804,7 +845,10 @@ async function saveEntry(next) {
   if (isProd) {
     for (const s of SUPPLIERS) {
       e.sup[s.key] = sup[s.key];
-      if (!sup[s.key]) e.count[s.key] = 0;
+      if (!sup[s.key]) {
+        e.count[s.key] = 0;
+        delete state.orders[s.key].done[e.id];
+      }
     }
     const soll = parseInt($('#pSoll').value, 10);
     e.soll = soll >= 0 ? soll : null;
@@ -856,6 +900,7 @@ async function deleteEntry(id) {
   const title = isSection(e) ? 'Abschnitt löschen?' : 'Produkt löschen?';
   if (!await ask({ title, text, yes: 'Löschen', no: 'Abbrechen', danger: true })) return;
   state.route.splice(i, 1);
+  for (const s of SUPPLIERS) delete state.orders[s.key].done[e.id];
   if (e.photo) {
     setPhotoUrl(e.id, null);
     deletePhoto(e.id).catch(console.error);

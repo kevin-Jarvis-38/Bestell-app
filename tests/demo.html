@@ -13,12 +13,10 @@ const entries = [
 const route = entries.map(([name, sup, n, soll], i) => name === '#'
   ? { id: 's' + i, kind: 'section', name: sup, emoji: n }
   : { id: 'p' + i, kind: 'product', name, photo: false, soll, sup, count: { lekkerland: sup.lekkerland ? n : 0, tabacon: 0 } });
-const items = route.filter(e => e.kind === 'product' && e.count.lekkerland)
-  .map(p => ({ id: p.id, name: p.name, count: p.count.lekkerland, done: false }))
-  .sort((a, b) => a.name.localeCompare(b.name, 'de'));
-items[0].done = items[1].done = true;
+// Brötchen und Feuerzeug sind eingegeben, Laugenbrezel wurde danach von 2 auf 4 geändert
+const done = { p1: 6, p12: 5, p3: 2 };
 localStorage.setItem('bestellapp', JSON.stringify({
-  v: 2, route, orders: { lekkerland: { created: Date.now() - 3600e3, items }, tabacon: null },
+  v: 3, route, orders: { lekkerland: { started: Date.now() - 3600e3, done }, tabacon: { started: null, done: {} } },
   ui: { supplier: params.get('sup') || 'lekkerland', view: params.get('view') || 'count', scroll: {}, lastBackup: params.has('nobackup') ? null : Date.now() },
 }));
 </script>

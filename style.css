@@ -206,18 +206,14 @@ main.enter { animation: fadeUp 0.25s ease-out; }
 @media (prefers-color-scheme: dark) { .thumb.letter { background: hsl(var(--h) 30% 22%); color: hsl(var(--h) 70% 78%); } }
 .name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
 
-.soll {
-  display: block;
-  width: fit-content;
-  margin-top: 5px;
-  padding: 1px 8px;
-  border-radius: 7px;
-  background: var(--bg);
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-}
+.pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.soll, .entered { padding: 1px 8px; border-radius: 7px; font-size: 13px; font-weight: 700; }
+.soll { background: var(--bg); color: var(--muted); }
 .row.on .soll { background: var(--card); }
+.entered { background: #d3f9d8; color: #2b8a3e; }
+@media (prefers-color-scheme: dark) { .entered { background: #1b3b24; color: #8ce99a; } }
+.changed { display: block; margin-top: 3px; color: #e8590c; font-size: 13px; font-weight: 800; }
+@media (prefers-color-scheme: dark) { .changed { color: #ffa94d; } }
 
 .stepper { flex: none; display: flex; align-items: center; gap: 4px; }
 .step {

@@ -6,9 +6,10 @@ Offline-App fürs Handy, um die Bestellungen bei Lekkerland und Tabacon vorzuber
   Jedes Produkt hat Foto, Soll-Bestand und Häkchen, bei welchen Lieferanten es bestellt wird.
 - **Durchgehen:** je Lieferant nur seine Produkte, mit +1/−1, Suche und Sprungknöpfen zu den Abschnitten.
 - **Bearbeiten:** Reihenfolge mit ▲/▼ oder über Position bzw. Abschnitt im Produktfenster, Papierkorb zum Löschen.
-- **Liste bestätigen:** fragt „Bist du sicher?“, macht daraus eine alphabetische Bestellliste und setzt die Zähler
-  dieses Lieferanten auf 0.
-- **Bestellliste:** abhaken, was am PC eingegeben ist (wird durchgestrichen), oder per „Teilen“ als Text verschicken.
+- **Bestellliste:** entsteht live aus den Zählern (alles > 0, alphabetisch). Nachträglich gezählte Produkte erscheinen
+  sofort. Abhaken, was am PC eingegeben ist (wird durchgestrichen, in „Durchgehen“ steht „✓ eingegeben“); ändert sich
+  danach die Menge, verschwindet der Haken und es steht „geändert, vorher …“ dabei. Per „Teilen“ als Text verschicken.
+- **Bestellliste löschen** (mit Sicherheitsabfrage) setzt die Zähler dieses Lieferanten auf 0 – erst dann.
 - Alles wird sofort auf dem Handy gespeichert. Sicherung über das Wolken-Symbol oben rechts; die App erinnert daran,
   wenn die letzte Sicherung älter als 7 Tage ist.
 - **Wiederherstellungspunkte:** einmal pro Woche legt die App beim Öffnen selbst eine Kopie von allem an (die letzten 4),
