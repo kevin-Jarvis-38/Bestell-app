@@ -1,11 +1,13 @@
 // Hält die App-Dateien offline vor. Nach jeder Änderung an der App die Nummer erhöhen,
 // sonst behält das Handy die alte Version.
-const CACHE = 'bestellapp-9';
+const CACHE = 'bestellapp-10';
 const FILES = ['./', './index.html', './app.js', './aufgaben.js', './style.css', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
   './fonts/nunito-latin.woff2'];
 
+// cache: 'reload' umgeht den Browser-Zwischenspeicher. GitHub Pages erlaubt 10 Minuten Zwischenspeichern;
+// ohne das landeten kurz nach einem Update noch die alten Dateien im neuen Offline-Speicher.
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)));
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))));
   self.skipWaiting();
 });
 

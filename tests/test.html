@@ -395,6 +395,11 @@ async function reset() {
     q('#tRepeat').dispatchEvent(new (w().Event)('change', { bubbles: true }));
     check(q('#tShiftField').hidden, 'Neue Aufgabe „Bei Gelegenheit“ ohne Tageswahl');
     click('#taskDlg [data-tact=cancel]');
+
+    // ---------- Offline-Speicher ----------
+    const cacheName = (await w().caches.keys()).find(k => k.startsWith('bestellapp'));
+    const cachedApp = cacheName && await (await (await w().caches.open(cacheName)).match('app.js')).text();
+    check(cachedApp && cachedApp.includes(`VERSION = '${w().eval('VERSION')}'`), `Offline-Speicher ${cacheName} enthält die aktuelle Version`);
   } catch (e) {
     check(false, 'Abbruch: ' + e.stack);
   }

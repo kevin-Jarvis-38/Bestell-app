@@ -6,7 +6,7 @@ const SUPPLIERS = [
   { key: 'lekkerland', name: 'Lekkerland', color: '#e03131' },
   { key: 'tabacon', name: 'Tabacon', color: '#1c7ed6' },
 ];
-const VERSION = '3.2';
+const VERSION = '3.3';
 const STORAGE_KEY = 'bestellapp';
 const PHOTO_MAX = 480; // längste Bildkante in Pixeln, hält die Fotos klein
 const BACKUP_DAYS = 7; // so alt darf die letzte Sicherung sein, bevor die App daran erinnert
