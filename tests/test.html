@@ -217,6 +217,9 @@ async function reset() {
     check(stored().ui.lastBackup && !q('.notice'), 'Nach dem Sichern verschwindet die Erinnerung');
 
     // ---------- Löschen ----------
+    // Wiederherstellungspunkt mit dem jetzigen Stand, damit das Zurückholen unten etwas zu tun hat
+    await w().writeTx('punkte', s => s.clear());
+    await load(); await wait(300);
     click('[data-act=toggle-edit]');
     click(`[data-id="${byNameId('Tabak')}"] [data-act=delete]`);
     check(q('#askTitle').textContent === 'Abschnitt löschen?', 'Abschnitt löschen fragt nach');
@@ -283,12 +286,12 @@ async function reset() {
     click('#taskDlg [data-tact=save]'); await wait(200);
     click('#todayBtn');
     check(q('main').textContent.includes('Noch offen von früher') && q('main').textContent.includes('Pfand wegbringen'), 'Unerledigtes von gestern steht heute unter "Noch offen"');
-    check(q('#badgeTasks').textContent === '3', 'Abzeichen zählt die offenen Aufgaben von heute');
-    while (q('.trow:not(.done) [data-act=task-check]')) q('.trow:not(.done) [data-act=task-check]').click();
+    check(q('#badgeTasks').textContent === String(qa('.tlist .trow:not(.done)').length), 'Abzeichen zählt die offenen Aufgaben von heute');
+    while (q('.tlist .trow:not(.done) [data-act=task-check]')) q('.tlist .trow:not(.done) [data-act=task-check]').click();
     check(q('canvas.confetti') && !q('.alldone').hidden && q('#badgeTasks').textContent === '', 'Alles erledigt: Konfetti, Abzeichen leer');
     check(q('[data-day="2026-10-27"] .dot').classList.contains('done'), 'Wochenleiste zeigt den Tag als erledigt');
     await load({ mode: 'tasks', heute: '2026-10-27' });
-    check(qa('.trow.done').length === 2 && !q('main').textContent.includes('Pfand'), 'Haken bleiben nach Neustart');
+    check(qa('.tlist .trow.done').length === qa('.tlist .trow').length && !q('main').textContent.includes('Pfand'), 'Haken bleiben nach Neustart');
 
     click('[data-task="auto-lekkerland"] [data-act=task-go]');
     check(q('body').dataset.mode === 'order' && stored().ui.supplier === 'lekkerland' && q('#appTitle').textContent === 'Bestellung',
@@ -306,12 +309,53 @@ async function reset() {
     check(!q('#monthDlg').open && q('[data-task="auto-tabacon"]'), 'Tag im Monat antippen springt hin (Freitag: Tabacon)');
 
     click('[data-day="2026-10-27"]');
-    click('.trow:not(.auto-lekkerland) [data-act=task-open]');
+    qa('.trow').find(r => r.textContent.includes('Kasse zählen')).querySelector('[data-act=task-open]').click();
     check(q('#tTitle').textContent === 'Aufgabe bearbeiten' && q('#tName').value === 'Kasse zählen', 'Aufgabe zum Bearbeiten öffnen');
     click('#taskDlg [data-tact=delete]');
     check(q('#askText').textContent.includes('an allen Tagen'), 'Löschen warnt bei wiederkehrenden Aufgaben');
     await answer(true);
     check(!has('2026-11-10', 'Kasse zählen'), 'Wiederkehrende Aufgabe gelöscht');
+
+    // ---------- Vorlage aus dem Berichtsheft ----------
+    const items = () => stored().tasks.items;
+    check(stored().tasks.seed === 1 && items().filter(t => t.repeat === 'pool').length === 12 && items().filter(t => t.id.startsWith('v-')).length === 25,
+      'Vorlage eingespielt: 13 feste und 12 „Bei Gelegenheit“');
+    check(has('2026-10-27', 'Lotto-Fahrer: Gewinnlose und Kundenkartenanfragen mitgeben') && has('2026-10-26', 'ProGas: Gasflaschenbestand übermitteln'),
+      'Lotto dienstags, ProGas montags');
+    check(!has('2026-10-28', 'Lieferung auspacken, buchen und verräumen') && has('2026-11-04', 'Lieferung auspacken, buchen und verräumen'),
+      'Mittwochs-Lieferung nicht an Schultagen, aber in den Ferien');
+    check(has('2026-11-02', 'Backwaren aufbacken') && !has('2026-10-27', 'Backwaren aufbacken') && !has('2026-10-31', 'Auslage und Theke säubern'),
+      'Aufbacken nur in Frühschicht-Wochen, Putzen nur an Arbeitstagen');
+    check(has('2026-12-28', 'Lieferung auspacken, buchen und verräumen') && !has('2027-03-29', 'Lieferung auspacken, buchen und verräumen'),
+      'Montags-Lieferung entfällt am Ostermontag');
+    const ids = k => w().eval(`tasksFor('${k}')`).map(t => t.id);
+    check(ids('2026-10-27').includes('auto-auffuellen') && ids('2026-10-30').includes('auto-auffuellen') && !ids('2026-10-26').includes('auto-auffuellen'),
+      'Auffüllen an jedem Bestelltag');
+    w().localStorage.setItem('bestellapp', JSON.stringify({ ...stored(), tasks: { ...stored().tasks, seed: 0 } }));
+    await load({ mode: 'tasks', heute: '2026-10-27' });
+    check(items().filter(t => t.id.startsWith('v-')).length === 25, 'Vorlage wird nicht doppelt eingespielt');
+
+    // ---------- Bei Gelegenheit ----------
+    check(q('details.pool') && !q('details.pool').open, 'Dienstag: „Bei Gelegenheit“ ist zugeklappt');
+    click('[data-day="2026-10-31"]');
+    check(!q('details.pool'), 'Wochenende: kein „Bei Gelegenheit“');
+    click('[data-day="2026-10-29"]');
+    check(q('details.pool').open && qa('details.pool .trow').length === 12, 'Donnerstag: aufgeklappt mit 12 Aufgaben');
+    const first = q('details.pool .trow');
+    const poolTitle = first.querySelector('.ttitle').textContent.trim();
+    first.querySelector('[data-act=task-check]').click();
+    check(items().find(t => t.title === poolTitle).lastDone === '2026-10-29', 'Erledigt merkt sich das Datum');
+    const rows = qa('details.pool .trow');
+    check(rows[rows.length - 1].querySelector('.ttitle').textContent.trim() === poolTitle && rows[rows.length - 1].classList.contains('done'),
+      'Zuletzt erledigte rutscht nach unten');
+    check(q('details.pool').open && !q('canvas.confetti'), 'Bereich bleibt offen, kein Konfetti für Gelegenheits-Aufgaben');
+    rows[rows.length - 1].querySelector('[data-act=task-check]').click();
+    check(items().find(t => t.title === poolTitle).lastDone === null, 'Haken weg: Datum wieder wie vorher');
+    click('[data-act=task-add]');
+    q('#tRepeat input[value=pool]').checked = true;
+    q('#tRepeat').dispatchEvent(new (w().Event)('change', { bubbles: true }));
+    check(q('#tShiftField').hidden, 'Neue Aufgabe „Bei Gelegenheit“ ohne Tageswahl');
+    click('#taskDlg [data-tact=cancel]');
   } catch (e) {
     check(false, 'Abbruch: ' + e.stack);
   }

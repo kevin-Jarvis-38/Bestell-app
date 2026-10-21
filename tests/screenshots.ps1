@@ -7,6 +7,7 @@ Remove-Item -Recurse -Force $profile -ErrorAction SilentlyContinue # sonst liefe
 foreach ($shot in @(
     @{ name = 'aufgaben'; query = 'mode=tasks&heute=2026-10-27'; dark = $false },
     @{ name = 'aufgaben-dunkel'; query = 'mode=tasks&heute=2026-10-27'; dark = $true },
+    @{ name = 'aufgaben-donnerstag'; query = 'mode=tasks&heute=2026-10-29&pool'; dark = $false },
     @{ name = 'aufgaben-monat'; query = 'mode=tasks&heute=2026-10-27&month'; dark = $false },
     @{ name = 'aufgabe-neu'; query = 'mode=tasks&heute=2026-10-27&newtask'; dark = $false },
     @{ name = 'zaehlen'; query = 'view=count&nobackup'; dark = $false },

@@ -653,6 +653,23 @@ div.sec { margin-bottom: 8px; }
 .trow.done .ttitle { color: var(--muted); text-decoration: line-through; }
 .repeat-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 
+details.pool { margin-top: 18px; padding: 2px 6px 8px; border-radius: 20px; background: var(--accent-soft); }
+details.pool summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 8px;
+  font-size: 17px;
+  font-weight: 800;
+  list-style: none;
+  cursor: pointer;
+}
+details.pool summary::-webkit-details-marker { display: none; }
+details.pool summary::after { content: "▾"; margin-left: auto; color: var(--accent); transition: transform 0.2s; }
+details.pool[open] summary::after { transform: rotate(180deg); }
+.pool-count { padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 13px; }
+details.pool .hint { margin: -6px 8px 10px; }
+
 /* ---------- Aufgaben: Monatsansicht ---------- */
 
 .month-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }

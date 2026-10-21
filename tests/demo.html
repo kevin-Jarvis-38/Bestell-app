@@ -45,6 +45,7 @@ const timer = setInterval(() => {
   const click = sel => { const el = doc.querySelector(sel); if (el) el.click(); };
   if (params.get('mode') !== 'tasks') click('[data-mode-tab=order]');
   if (params.has('month')) click('#monthBtn');
+  if (params.has('pool')) iframe.contentWindow.scrollTo(0, doc.querySelector('details.pool').getBoundingClientRect().top - 260);
   if (params.has('newtask')) {
     click('[data-act=task-add]');
     doc.querySelector('#tName').value = 'Zigarettenregal sortieren';

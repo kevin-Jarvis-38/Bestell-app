@@ -6,7 +6,7 @@ const SUPPLIERS = [
   { key: 'lekkerland', name: 'Lekkerland', color: '#e03131' },
   { key: 'tabacon', name: 'Tabacon', color: '#1c7ed6' },
 ];
-const VERSION = '3.0';
+const VERSION = '3.1';
 const STORAGE_KEY = 'bestellapp';
 const PHOTO_MAX = 480; // längste Bildkante in Pixeln, hält die Fotos klein
 const BACKUP_DAYS = 7; // so alt darf die letzte Sicherung sein, bevor die App daran erinnert
@@ -33,8 +33,8 @@ const TRASH = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" strok
 //         { id, kind: 'product', name, photo, soll, sup: { lekkerland: true, … }, count: { lekkerland: 0, … } }.
 // orders: je Lieferant { started, done: { produktId: Menge beim Abhaken } }. Die Bestellliste selbst sind alle
 //         Produkte mit Zähler > 0; abgehakt ist ein Produkt, solange seine Menge noch der beim Abhaken entspricht.
-// tasks:  eigene Aufgaben { items: [{ id, title, repeat, date, weekday, shift, created }], done: { "JJJJ-MM-TT": [ids] } },
-//         siehe aufgaben.js.
+// tasks:  eigene Aufgaben { items: [{ id, title, repeat, date, weekday, shift, created, lastDone }],
+//         done: { "JJJJ-MM-TT": [ids] }, seed: Version der eingespielten Vorlage }, siehe aufgaben.js.
 
 const emptyOrder = () => ({ started: null, done: {} });
 
@@ -48,18 +48,21 @@ function emptyState() {
 }
 
 function normalizeTasks(t) {
-  const out = { items: [], done: {} };
+  const out = { items: [], done: {}, seed: 0 };
   if (!t || typeof t !== 'object') return out;
+  out.seed = Number.isInteger(t.seed) ? t.seed : 0;
   for (const x of Array.isArray(t.items) ? t.items : []) {
     if (!x || !x.id || !x.title) continue;
     out.items.push({
       id: String(x.id),
       title: String(x.title),
-      repeat: ['once', 'weekly', 'workdays', 'daily'].includes(x.repeat) ? x.repeat : 'once',
+      repeat: ['once', 'weekly', 'workdays', 'daily', 'pool'].includes(x.repeat) ? x.repeat : 'once',
       date: x.date ? String(x.date) : null,
       weekday: Number.isInteger(x.weekday) ? x.weekday : null,
-      shift: ['frueh', 'spaet'].includes(x.shift) ? x.shift : 'any',
+      shift: ['work', 'frueh', 'spaet'].includes(x.shift) ? x.shift : 'any',
       created: x.created ? String(x.created) : null,
+      lastDone: x.lastDone ? String(x.lastDone) : null, // nur bei „Bei Gelegenheit“
+      prevDone: x.prevDone ? String(x.prevDone) : null,
     });
   }
   for (const [k, ids] of Object.entries(t.done || {})) if (Array.isArray(ids) && ids.length) out.done[k] = ids.map(String);
@@ -1121,6 +1124,7 @@ $('#importInput').addEventListener('change', async e => {
 
 async function init() {
   save(); // hält einen eventuell umgebauten alten Stand sofort fest
+  seedTasks();
   render();
   try {
     const photos = await loadAllPhotos();

@@ -89,30 +89,80 @@ function autoTasks(k) {
   const out = [];
   if (lekkerlandDay(k) === k) out.push({ id: 'auto-lekkerland', title: 'Lekkerland bestellen', auto: 'lekkerland' });
   if (tabaconDay(k) === k) out.push({ id: 'auto-tabacon', title: 'Tabacon bestellen', auto: 'tabacon' });
+  if (out.length) out.unshift({ id: 'auto-auffuellen', title: 'Regale und Kühlschränke auffüllen', note: 'vor der Bestellung, für den Überblick' });
   return out;
 }
 
 function appliesOn(t, k) {
+  if (t.repeat === 'pool') return false; // „Bei Gelegenheit“ steht in einem eigenen Bereich
   if (t.repeat === 'once') return t.date === k;
   if (t.created && k < t.created) return false; // wiederkehrende Aufgaben erst ab dem Tag, an dem sie angelegt wurden
   const info = dayInfo(k);
-  if (t.shift !== 'any' && (info.kind !== 'work' || info.shift !== t.shift)) return false;
+  if (t.shift === 'work' && info.kind !== 'work') return false;
+  if ((t.shift === 'frueh' || t.shift === 'spaet') && (info.kind !== 'work' || info.shift !== t.shift)) return false;
   if (t.repeat === 'daily') return true;
   if (t.repeat === 'workdays') return info.kind === 'work';
   if (t.repeat === 'weekly') return weekday(k) === t.weekday;
   return false;
 }
 
-const tasksFor = k => [...autoTasks(k), ...state.tasks.items.filter(t => appliesOn(t, k))];
+const tasksFor = k => [...state.tasks.items.filter(t => appliesOn(t, k)), ...autoTasks(k)];
+// „Bei Gelegenheit“: am längsten nicht erledigte zuerst
+const poolTasks = () => state.tasks.items.filter(t => t.repeat === 'pool').sort((a, b) => (a.lastDone || '').localeCompare(b.lastDone || ''));
 const isTaskDone = (id, k) => (state.tasks.done[k] || []).includes(id);
 const overdue = today => state.tasks.items
   .filter(t => t.repeat === 'once' && t.date < today && !isTaskDone(t.id, t.date))
   .sort((a, b) => (a.date < b.date ? -1 : 1));
 
 function repeatLabel(t) {
+  if (t.repeat === 'pool') return t.lastDone ? `zuletzt ${fmtShort(t.lastDone)}` : 'noch nie erledigt';
   const base = { once: 'einmalig', weekly: `jeden ${WD_LONG[t.weekday]}`, workdays: 'an jedem Arbeitstag', daily: 'jeden Tag' }[t.repeat];
-  const shift = { frueh: ' · nur Frühschicht-Wochen', spaet: ' · nur Spätschicht-Wochen' }[t.shift] || '';
+  const shift = { work: ' · nur Arbeitstage', frueh: ' · nur Frühschicht-Wochen', spaet: ' · nur Spätschicht-Wochen' }[t.shift] || '';
   return base + shift;
+}
+
+// ---------- Vorlage aus dem Berichtsheft (Wochenablauf laut Kevin, 21.10.2026) ----------
+
+const SEED_VERSION = 1;
+const SEED = [
+  ['v-aufsperren', 'Laden aufsperren und Kasse vorbereiten', 'workdays', null, 'frueh'],
+  ['v-zeitungen', 'Zeitungen auslegen', 'workdays', null, 'frueh'],
+  ['v-aufbacken', 'Backwaren aufbacken', 'workdays', null, 'frueh'],
+  ['v-mo-lieferung', 'Lieferung auspacken, buchen und verräumen', 'weekly', 1, 'work'],
+  ['v-progas', 'ProGas: Gasflaschenbestand übermitteln', 'weekly', 1, 'work'],
+  ['v-remission', 'Zeitungen remissionieren (retour)', 'weekly', 1, 'work'],
+  ['v-lotto-abgabe', 'Lotto-Fahrer: Gewinnlose und Kundenkartenanfragen mitgeben', 'weekly', 2, 'work'],
+  ['v-lotto-annahme', 'Lotto-Lieferung: neue Lose einbuchen, Plakate aufhängen, Post annehmen', 'weekly', 2, 'work'],
+  ['v-mi-lieferung', 'Lieferung auspacken, buchen und verräumen', 'weekly', 3, 'work'],
+  ['v-do-gross', 'Ruhiger Tag: eine größere Aufgabe aus „Bei Gelegenheit“ erledigen', 'weekly', 4, 'work'],
+  ['v-wischen', 'Kühlschränke und Schränke auswischen', 'workdays', null, 'any'],
+  ['v-auslage', 'Auslage und Theke säubern', 'workdays', null, 'any'],
+  ['v-mhd', 'Mindesthaltbarkeit (MHD) kontrollieren', 'workdays', null, 'any'],
+  ['v-inv-lager', 'Teilinventur im Lager', 'pool'],
+  ['v-inv-tabak', 'Inventur Tabakwaren', 'pool'],
+  ['v-inv-getraenke', 'Inventur Getränke und Kastenwaren', 'pool'],
+  ['v-lager', 'Lagerbestände prüfen und neu sortieren', 'pool'],
+  ['v-preise', 'Preisauszeichnung kontrollieren und aktualisieren', 'pool'],
+  ['v-stammdaten', 'Artikelstammdaten pflegen, neue Produkte anlegen', 'pool'],
+  ['v-flaeche', 'Verkaufsfläche umgestalten, Aktionsware platzieren', 'pool'],
+  ['v-ablage', 'Rechnungen und Lieferscheine ablegen', 'pool'],
+  ['v-preisvergleich', 'Preise bei verschiedenen Lieferanten vergleichen', 'pool'],
+  ['v-mhd-doku', 'Nicht verkaufsfähige Ware dokumentieren', 'pool'],
+  ['v-saugen', 'Verkaufsraum saugen', 'pool'],
+  ['v-tankautomat', 'Tankautomaten auf Inhalt prüfen', 'pool'],
+];
+
+// Einmalig ergänzen; Aufgaben mit gleichem Namen (z. B. selbst angelegt) werden nicht doppelt angelegt
+function seedTasks() {
+  if ((state.tasks.seed || 0) >= SEED_VERSION) return;
+  const today = todayKey();
+  const have = new Set(state.tasks.items.map(t => t.repeat + '|' + (t.weekday ?? '') + '|' + t.title.toLowerCase()));
+  for (const [id, title, repeat, wd = null, shift = 'any'] of SEED) {
+    if (have.has(repeat + '|' + (wd ?? '') + '|' + title.toLowerCase()) || state.tasks.items.some(t => t.id === id)) continue;
+    state.tasks.items.push({ id, title, repeat, date: null, weekday: wd, shift: repeat === 'pool' ? 'any' : shift, created: today, lastDone: null });
+  }
+  state.tasks.seed = SEED_VERSION;
+  save();
 }
 
 // ---------- Anzeige ----------
@@ -145,15 +195,32 @@ function renderTasks() {
     ${all.length ? `
       <div class="bar"><div class="bar-text"><b>${done}</b> von ${all.length} erledigt</div></div>
       <div class="progress"><span style="width:${100 * done / all.length}%"></span></div>` : ''}
-    ${late.length ? `<div class="sec">⏰ Noch offen von früher</div><ul class="list">${late.map(taskRow).join('')}</ul>` : ''}
+    ${late.length ? `<div class="sec">⏰ Noch offen von früher</div><ul class="list tlist">${late.map(taskRow).join('')}</ul>` : ''}
     ${list.length
-      ? `${late.length ? '<div class="sec">📅 Heute</div>' : ''}<ul class="list">${list.map(taskRow).join('')}</ul>`
+      ? `${late.length ? '<div class="sec">📅 Heute</div>' : ''}<ul class="list tlist">${list.map(taskRow).join('')}</ul>`
       : late.length ? '' : `<div class="empty"><div class="empty-icon">${info.kind === 'weekend' ? '🛋️' : '✨'}</div><p>Für diesen Tag steht nichts an.</p></div>`}
     <p class="alldone" ${all.length && done === all.length ? '' : 'hidden'}>Alles erledigt ✓</p>
+    ${poolSection(k, info)}
     <button class="btn big" data-act="task-add">+ Aufgabe</button>`;
   renderWeek();
   updateTaskBadge();
 }
+
+// „Bei Gelegenheit“ an Arbeitstagen; donnerstags (ruhiger Tag) aufgeklappt, sonst zugeklappt
+const poolOpen = {};
+function poolSection(k, info) {
+  const pool = info.kind === 'work' ? poolTasks() : [];
+  if (!pool.length) return '';
+  const open = k in poolOpen ? poolOpen[k] : weekday(k) === 4;
+  return `<details class="pool"${open ? ' open' : ''}>
+    <summary>💡 Bei Gelegenheit <span class="pool-count">${pool.length}</span></summary>
+    <p class="hint">Was am längsten her ist, steht oben.</p>
+    <ul class="list">${pool.map(t => taskRow({ t, k })).join('')}</ul>
+  </details>`;
+}
+main.addEventListener('toggle', e => {
+  if (e.target.matches('details.pool')) poolOpen[taskDay] = e.target.open;
+}, true);
 
 function taskRow({ t, k, late }) {
   const done = isTaskDone(t.id, k);
@@ -162,13 +229,16 @@ function taskRow({ t, k, late }) {
     const items = orderItems(t.auto);
     const entered = items.filter(p => isDone(p, t.auto)).length;
     meta = items.length ? `${items.length} Produkte in der Liste · ${entered} eingegeben` : 'Bestellliste ist noch leer';
+  } else if (t.note) {
+    meta = t.note;
   } else {
     meta = late ? `fällig ${fmtShort(t.date)}` : repeatLabel(t);
   }
+  const act = t.auto ? 'task-go' : t.note ? 'task-none' : 'task-open';
   return `
     <li><div class="trow${done ? ' done' : ''}${t.auto ? ' auto-' + t.auto : ''}" data-task="${esc(t.id)}" data-day="${k}">
       <button class="tcheck" data-act="task-check" role="checkbox" aria-checked="${done}" aria-label="erledigt"><span class="box"></span></button>
-      <button class="tbody" data-act="${t.auto ? 'task-go' : 'task-open'}">
+      <button class="tbody" data-act="${act}">
         <span class="ttitle">${t.auto ? (t.auto === 'lekkerland' ? '🛒 ' : '🚬 ') : ''}${esc(t.title)}</span>
         <small class="tmeta">${esc(meta)}</small>
         ${t.auto ? '<span class="tgo">Zur Bestellung ›</span>' : ''}
@@ -219,6 +289,13 @@ function toggleTask(id, k) {
   if (i >= 0) list.splice(i, 1);
   else list.push(id);
   if (!list.length) delete state.tasks.done[k];
+  const pool = state.tasks.items.find(t => t.id === id && t.repeat === 'pool');
+  if (pool && i < 0) {
+    pool.prevDone = pool.lastDone;
+    pool.lastDone = k;
+  } else if (pool && pool.lastDone === k) {
+    pool.lastDone = pool.prevDone || null;
+  }
   save();
   buzz();
   const y = scrollY;
@@ -227,6 +304,7 @@ function toggleTask(id, k) {
   if (i >= 0) return;
   const row = main.querySelector(`[data-task="${CSS.escape(id)}"][data-day="${k}"]`);
   if (row) row.classList.add('just');
+  if (pool) return;
   const { late, list: today } = dayEntries(taskDay);
   if ([...late, ...today].every(x => isTaskDone(x.t.id, x.k))) confetti();
 }
@@ -347,6 +425,7 @@ function openTask(id) {
     ['weekly', `Jeden ${WD_LONG[wd]}`],
     ['workdays', 'An jedem Arbeitstag'],
     ['daily', 'Jeden Tag'],
+    ['pool', 'Bei Gelegenheit (ohne festen Tag)'],
   ].map(([v, l]) => `<label class="chk"><input type="radio" name="repeat" value="${v}">${l}</label>`).join('');
   $(`#tRepeat input[value="${t ? t.repeat : 'once'}"]`).checked = true;
   $('#tShift').value = t ? t.shift : 'any';
@@ -357,7 +436,7 @@ function openTask(id) {
 }
 
 function syncShiftField() {
-  $('#tShiftField').hidden = $('#tRepeat input:checked').value === 'once';
+  $('#tShiftField').hidden = ['once', 'pool'].includes($('#tRepeat input:checked').value);
 }
 $('#tRepeat').addEventListener('change', syncShiftField);
 
@@ -380,7 +459,7 @@ function saveTask() {
     repeat,
     date: repeat === 'once' ? td.anchor : null,
     weekday: repeat === 'weekly' ? td.wd : null,
-    shift: repeat === 'once' ? 'any' : $('#tShift').value,
+    shift: ['once', 'pool'].includes(repeat) ? 'any' : $('#tShift').value,
   });
   save();
   taskDlg.close();
