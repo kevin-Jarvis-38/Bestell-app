@@ -21,7 +21,7 @@ localStorage.setItem('bestellapp', JSON.stringify({
 <style>body { margin: 0; } iframe { border: 0; width: 412px; height: 915px; display: block; }</style>
 <iframe src="../index.html"></iframe>
 <script>
-// ?edit=p6 öffnet das Bearbeiten-Fenster dieses Produkts
+// ?edit=p6 öffnet das Bearbeiten-Fenster dieses Produkts, ?edit=keins nur den Bearbeiten-Modus
 if (params.get('edit')) {
   const timer = setInterval(() => {
     const doc = document.querySelector('iframe').contentDocument;
@@ -29,7 +29,8 @@ if (params.get('edit')) {
     if (!btn) return;
     clearInterval(timer);
     btn.click();
-    doc.querySelector(`[data-id="${params.get('edit')}"] [data-act=open]`).click();
+    const row = doc.querySelector(`[data-id="${params.get('edit')}"] [data-act=open]`);
+    if (row) row.click();
   }, 100);
 }
 </script>

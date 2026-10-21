@@ -138,6 +138,8 @@ main { max-width: 720px; margin: 0 auto; padding: 10px 10px calc(28px + env(safe
 .row.on .count { color: var(--accent); }
 
 .row.edit { gap: 6px; }
+.row.edit .step { width: 44px; height: 48px; display: grid; place-items: center; }
+.step.del { color: var(--danger); }
 .pos { flex: none; width: 30px; text-align: center; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
 .rowbtn {
   flex: 1;

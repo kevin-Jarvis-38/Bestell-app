@@ -3,6 +3,7 @@
 $result = Join-Path $PSScriptRoot 'result.txt'
 Remove-Item $result -ErrorAction SilentlyContinue
 $profile = Join-Path $env:TEMP 'bestellapp-chrome-test'
+Remove-Item -Recurse -Force $profile -ErrorAction SilentlyContinue # sonst liefert der Offline-Speicher alte Dateien
 $chrome = Start-Process "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" -PassThru -ArgumentList @(
   '--headless=new', '--disable-gpu', "--user-data-dir=$profile", '--remote-debugging-port=0', 'http://localhost:8765/tests/test.html')
 $deadline = (Get-Date).AddSeconds(60)

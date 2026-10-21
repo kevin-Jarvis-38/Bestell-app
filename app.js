@@ -218,6 +218,11 @@ const editRow = (p, i, n) => `
     <button class="rowbtn" data-act="open">${thumb(p)}<span class="name">${esc(p.name)}</span></button>
     <button class="step" data-act="up" aria-label="nach oben"${i ? '' : ' disabled'}>▲</button>
     <button class="step" data-act="down" aria-label="nach unten"${i < n - 1 ? '' : ' disabled'}>▼</button>
+    <button class="step del" data-act="delete" aria-label="löschen">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>
+      </svg>
+    </button>
   </li>`;
 
 function renderOrder() {
@@ -330,6 +335,7 @@ main.addEventListener('click', e => {
     case 'open': return openProduct(id);
     case 'up': return move(id, -1);
     case 'down': return move(id, 1);
+    case 'delete': return deleteProduct(id);
     case 'confirm': return confirmOrder();
     case 'check': return toggleDone(+btn.dataset.i, btn);
     case 'clear-order': return clearOrder();
@@ -469,9 +475,9 @@ async function saveProduct(next) {
   else productDlg.close();
 }
 
-async function deleteProduct() {
+async function deleteProduct(id) {
   const list = cur().products;
-  const i = list.findIndex(x => x.id === pd.id);
+  const i = list.findIndex(x => x.id === id);
   if (i < 0) return;
   const p = list[i];
   if (!await ask({ title: 'Produkt löschen?', text: `„${p.name}“ wird aus der Liste für ${supName()} entfernt.`, yes: 'Löschen', no: 'Abbrechen', danger: true })) return;
@@ -481,7 +487,7 @@ async function deleteProduct() {
     deletePhoto(p.id).catch(console.error);
   }
   save();
-  productDlg.close();
+  if (productDlg.open) productDlg.close();
   renderCount();
 }
 
@@ -495,7 +501,7 @@ productDlg.addEventListener('click', e => {
     case 'cancel': return productDlg.close();
     case 'save': return saveProduct(false);
     case 'save-next': return saveProduct(true);
-    case 'delete': return deleteProduct();
+    case 'delete': return deleteProduct(pd.id);
   }
 });
 productDlg.addEventListener('close', () => { pd = null; });

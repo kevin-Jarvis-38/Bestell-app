@@ -133,7 +133,20 @@ async function answer(yes) { await wait(100); click(yes ? '#askYes' : '#askNo');
     click('[data-act=open]');
     click('#productDlg [data-pact=delete]');
     await answer(true); await wait(200);
-    check(stored().suppliers.tabacon.products.length === 0, 'Produkt löschen');
+    check(stored().suppliers.tabacon.products.length === 0, 'Produkt löschen im Fenster');
+
+    // Löschen per Papierkorb in der Zeile
+    click('[data-act=add]');
+    await addProduct('Snus A', { next: true });
+    await addProduct('Snus B');
+    const snusA = stored().suppliers.tabacon.products[0].id;
+    click(`[data-id="${snusA}"] [data-act=delete]`);
+    check(q('#askDlg').open && q('#askTitle').textContent === 'Produkt löschen?', 'Papierkorb fragt nach');
+    await answer(false);
+    check(stored().suppliers.tabacon.products.length === 2, 'Abbrechen löscht nichts');
+    click(`[data-id="${snusA}"] [data-act=delete]`);
+    await answer(true); await wait(200);
+    check(stored().suppliers.tabacon.products.map(p => p.name).join('|') === 'Snus B' && !q(`[data-id="${snusA}"]`), 'Papierkorb löscht das Produkt');
   } catch (e) {
     check(false, 'Abbruch: ' + e.stack);
   }
