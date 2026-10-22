@@ -1,4 +1,4 @@
-# Bestell-App
+# Workie (Bestell-App)
 
 Offline-App fürs Handy mit zwei getrennten Bereichen (Umschalter unten): **Aufgaben** und **Bestellung**.
 Die App startet immer bei den Aufgaben von heute.

@@ -1,7 +1,7 @@
 // Hält die App-Dateien offline vor. Nach jeder Änderung an der App die Nummer erhöhen,
 // sonst behält das Handy die alte Version.
-const CACHE = 'bestellapp-10';
-const FILES = ['./', './index.html', './app.js', './aufgaben.js', './style.css', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
+const CACHE = 'bestellapp-11';
+const FILES = ['./', './index.html', './app.js', './aufgaben.js', './style.css', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-192.png', './icons/icon-maskable-512.png',
   './fonts/nunito-latin.woff2'];
 
 // cache: 'reload' umgeht den Browser-Zwischenspeicher. GitHub Pages erlaubt 10 Minuten Zwischenspeichern;
